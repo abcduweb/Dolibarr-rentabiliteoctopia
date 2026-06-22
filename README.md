@@ -9,7 +9,7 @@ Développé par [ABCduWeb](https://www.abcduweb.fr) — version **1.2.1**
 
 `rentabiliteoctopia` est un module Dolibarr qui calcule automatiquement la rentabilité de votre boutique Cdiscount/Octopia, mois par mois et produit par produit.
 
-Il fonctionne **en parallèle** avec le module **octopiaSync** (qui importe les commandes Octopia dans Dolibarr) : il lit les tables `llx_octopiaSync_order` et `llx_octopiaSync_orderline` pour agréger les ventes, et les combine avec les frais et taux de commission configurés pour produire un tableau de bord de rentabilité.
+Il fonctionne **en parallèle** avec le module **octopiaSync** : il lit les tables d'octopiaSync et les combine avec les frais et taux de commission configurés pour produire un tableau de bord de rentabilité complet.
 
 ---
 
@@ -53,7 +53,7 @@ rentabiliteoctopia/
 │   └── modules/
 │       └── modRentabiliteOctopia.class.php
 ├── lib/
-│   ├── rentabiliteoctopia.lib.php     # Fonctions utilitaires + calculs
+│   ├── rentabiliteoctopia.lib.php        # Fonctions utilitaires + calculs
 │   ├── OctopiaRentabiliteSync.class.php  # Synchro octopiaSync → rentabilité
 │   └── OctopiaFactureImport.class.php    # Import frais depuis factures fournisseur
 ├── cron/
@@ -105,16 +105,31 @@ llx_rentabiliteoctopia_params
 
 ### 1. Synchronisation des ventes (depuis octopiaSync)
 
-Le module lit les tables de **octopiaSync** :
+Le module est compatible avec la version d'octopiaSync qui utilise les tables :
 
 ```
-llx_octopiaSync_order      → commandes (status, purchasedAt)
-llx_octopiaSync_orderline  → lignes (product_ref, qty, unit_price_ht)
-llx_product                → coût d'achat (cost_price) via ref
+llx_octopia_orders     : commandes (octopia_order_status, dolibarr_order_id, is_refunded)
 ```
+
+Cette version ne stocke **pas** ses propres lignes de commande : elle référence les commandes Dolibarr natives via `dolibarr_order_id`. Les données produits viennent donc des tables standard Dolibarr :
+
+```
+llx_octopia_orders  →  dolibarr_order_id
+                              ↓
+                       llx_commande          (date, statut commande)
+                              ↓
+                       llx_commandedet       (fk_product, qty, subprice)
+                              ↓
+                       llx_product           (ref, label, cost_price)
+```
+
+**Filtres appliqués lors de la synchronisation :**
+- `o.is_refunded = 0` — exclut les commandes remboursées
+- `o.octopia_order_status NOT IN ('CANCELLED', 'REFUNDED', 'REFUSED', 'CANCELED')`
+- `c.fk_statut >= 1` — commandes Dolibarr validées uniquement
+- `o.dolibarr_order_id IS NOT NULL` — ignore les lignes orphelines
 
 La classe `OctopiaRentabiliteSync` :
-- Filtre les commandes par statut (exclut annulées : `CANCELLED`, `REFUNDED`…)
 - Agrège CA HT + quantités par référence produit sur le mois demandé
 - Crée automatiquement les produits manquants dans `llx_rentabiliteoctopia_produit`
 - Fait un `INSERT … ON DUPLICATE KEY UPDATE` dans `llx_rentabiliteoctopia_vente`
@@ -125,9 +140,9 @@ La classe `OctopiaRentabiliteSync` :
 **Pour chaque produit :**
 ```
 CA             = qty_vendue × prix_ht
-Commission     = commission_reel  [si saisi]
-               OU qty × prix_ht × commission_pct [override produit]
-               OU qty × prix_ht × cat_commission_pct [taux catégorie]
+Commission     = commission_reel  [si saisi manuellement]
+               OU qty × prix_ht × commission_pct  [override produit]
+               OU qty × prix_ht × cat_commission_pct  [taux catégorie]
 Retours        = qty × taux_retour_pct% × cout_retour
 Coût achat     = qty × cout_achat
 Marge produit  = CA − Coût achat − Commission − Retours
@@ -204,27 +219,30 @@ tail -50 /tmp/rentabiliteoctopia_cron.log
 
 ---
 
-## 🐛 Bugs corrigés en v1.2.1
+## 🐛 Historique des corrections
+
+### v1.2.1
 
 | # | Fichier | Description |
 |---|---|---|
 | 1 | `admin/admin.php` | **Typo lang key** : `rentabiliteocternity` → `rentabiliteoctopia` (module non traduit) |
-| 2 | Tous les fichiers POST | **CSRF validation cassée** : `newToken()` régénérait `$_SESSION['newtoken']` AVANT la comparaison, rendant la vérification toujours fausse. Correction : comparaison directe `$token !== $_SESSION['newtoken']` puis `newToken()` après usage |
-| 3 | `modRentabiliteOctopia.class.php` | **config_page_url** pointait vers `admin.php` (root, obsolète) au lieu de `admin/admin.php` |
+| 2 | Tous les fichiers POST | **CSRF validation cassée** : `newToken()` régénérait `$_SESSION['newtoken']` AVANT la comparaison, rendant la vérification toujours fausse. Correction : comparaison directe puis `newToken()` après usage valide |
+| 3 | `modRentabiliteOctopia.class.php` | **`config_page_url`** pointait vers `admin.php` (root, obsolète) au lieu de `admin/admin.php` |
 | 4 | `admin.php` (root) | Clés de paramètres obsolètes (`commission_pct`, `abonnement_mois`…) causant des PHP Warnings. Remplacé par une redirection vers `admin/admin.php` |
 | 5 | `categories.php` | **Suppression sans CSRF** : le DELETE passait en GET sans token. Remplacé par un formulaire POST avec token |
 | 6 | `produits.php` | **`delete_produit` sans CSRF** : même vulnérabilité, corrigée |
-| 7 | `OctopiaRentabiliteSync.class.php` | **GROUP BY p.cost_price** pouvait créer des doublons d'agrégats si le `cost_price` du produit variait. Remplacé par `MAX(COALESCE(p.cost_price, 0))` avec `GROUP BY` sur `product_ref, product_name` uniquement |
+| 7 | `OctopiaRentabiliteSync.class.php` | **`GROUP BY p.cost_price`** pouvait créer des doublons si le `cost_price` variait. Remplacé par `MAX(COALESCE(p.cost_price, 0))` |
+| 8 | `sync.php` + `OctopiaRentabiliteSync.class.php` | **Compatibilité octopiaSync** : réécriture complète des requêtes SQL pour utiliser `llx_octopia_orders` + tables Dolibarr natives (`llx_commande`, `llx_commandedet`, `llx_product`) au lieu des tables `llx_octopiaSync_order` / `llx_octopiaSync_orderline` inexistantes |
 
 ---
 
 ## 🔗 Dépendance avec octopiaSync
 
-Ce module est un **satellite de octopiaSync**. Il ne stocke pas lui-même les commandes — il les lit depuis les tables d'octopiaSync.
+Ce module est un **satellite de octopiaSync**. Il ne stocke pas lui-même les commandes — il les lit depuis les tables d'octopiaSync et les tables natives Dolibarr.
 
 Workflow complet :
 ```
-API Octopia → [octopiaSync] → llx_octopiaSync_order/orderline
+API Octopia → [octopiaSync] → llx_octopia_orders (+ llx_commande / llx_commandedet)
                                         ↓
                            [rentabiliteoctopia sync]
                                         ↓
@@ -234,7 +252,7 @@ API Octopia → [octopiaSync] → llx_octopiaSync_order/orderline
                               Tableau de bord rentabilité
 ```
 
-Si octopiaSync n'est pas installé, la page de synchronisation affiche une alerte et les boutons de sync sont désactivés. Le tableau de bord fonctionne avec des données saisies manuellement.
+Si octopiaSync n'est pas installé (`llx_octopia_orders` absente), la page de synchronisation affiche une alerte et les boutons sont désactivés. Le tableau de bord fonctionne avec des données saisies manuellement.
 
 ---
 
