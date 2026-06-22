@@ -45,12 +45,12 @@ print '<div class="fichecenter"><div class="fichehalfleft">';
 print '<table class="border tableforfield" style="width:100%">';
 print '<tr class="liste_titre"><td colspan="2">Synthèse '.strtolower($moisNoms[$mois]).' '.$annee.'</td></tr>';
 $rows = array(
-    array('CA HT total',          price($kpis['ca_total']).' €'),
-    array('Commissions Octopia',  price($kpis['commissions']).' €'),
-    array('Coût achat total',     price($kpis['cout_achat']).' €'),
-    array('Marge produits brute', price($kpis['marge_produits']).' € ('.$kpis['taux_marge'].'%)'),
-    array('Frais fixes du mois',  price($kpis['frais_fixes']).' €'),
-    array('Marge nette',          price($kpis['marge_nette']).' € ('.$kpis['taux_net'].'%)'),
+    array('CA HT total',          roc_eur($kpis['ca_total'])),
+    array('Commissions Octopia',  roc_eur($kpis['commissions'])),
+    array('Coût achat total',     roc_eur($kpis['cout_achat'])),
+    array('Marge produits brute', roc_eur($kpis['marge_produits']).' ('.$kpis['taux_marge'].'%)'),
+    array('Frais fixes du mois',  roc_eur($kpis['frais_fixes'])),
+    array('Marge nette',          roc_eur($kpis['marge_nette']).' ('.$kpis['taux_net'].'%)'),
     array('Unités vendues',       $kpis['qty_total']),
     array('Produits actifs',      $kpis['nb_produits'].' références'),
 );
@@ -63,7 +63,11 @@ print '</div>';
 // Détail frais fixes
 print '<div class="fichehalfright">';
 print '<table class="border tableforfield" style="width:100%">';
-print '<tr class="liste_titre"><td colspan="2">Détail frais fixes du mois <a href="frais.php?mois='.$mois.'&annee='.$annee.'" class="butAction" style="float:right;padding:2px 8px;font-size:11px">Modifier</a></td></tr>';
+print '<tr class="liste_titre"><td colspan="2">Détail frais fixes du mois';
+if ($kpis['frais_fixes'] == 0) {
+    print ' <span style="color:#e67e22;font-size:11px;font-weight:normal">⚠ Non saisis</span>';
+}
+print ' <a href="frais.php?mois='.$mois.'&annee='.$annee.'" class="butAction" style="float:right;padding:2px 8px;font-size:11px">' . ($kpis['frais_fixes'] == 0 ? '✏ Saisir les frais' : 'Modifier') . '</a></td></tr>';
 $labelsFreais = array(
     'abonnement'     => 'Abonnement Cdiscount',
     'fulfilment'     => 'Fulfilment Octopia',
@@ -74,11 +78,11 @@ $labelsFreais = array(
 );
 foreach ($labelsFreais as $type => $label) {
     $m = isset($frais[$type]) ? $frais[$type]['montant'] : 0;
-    if ($m == 0 && $type !== 'abonnement') continue;
+    // Affiche tous les types (y compris 0) pour que l'utilisateur voit ce qui manque
     $lbl = (!empty($frais[$type]['label'])) ? dol_escape_htmltag($frais[$type]['label']) : $label;
-    print '<tr><td>'.$lbl.'</td><td class="right"><b>'.price($m).' €</b></td></tr>';
+    print '<tr><td>'.$lbl.'</td><td class="right"><b>'.roc_eur($m).'</b></td></tr>';
 }
-print '<tr class="liste_titre"><td>Total frais fixes</td><td class="right"><b>'.price($kpis['frais_fixes']).' €</b></td></tr>';
+print '<tr class="liste_titre"><td>Total frais fixes</td><td class="right"><b>'.roc_eur($kpis['frais_fixes']).'</b></td></tr>';
 print '</table>';
 if (!$seuilOk) {
     print '<div class="warning" style="padding:10px;margin-top:10px;border-radius:4px;">';
@@ -86,6 +90,15 @@ if (!$seuilOk) {
     print '</div>';
 }
 print '</div></div><br>';
+
+// Avertissement si commissions = 0 avec des ventes (categories non assignees)
+if ($kpis['ca_total'] > 0 && $kpis['commissions'] == 0) {
+    print '<div class="warning" style="padding:10px;margin:10px 0;border-radius:4px;">';
+    print '<b>⚠ Commissions à 0€</b> : aucun produit n\'a de catégorie assignée. ';
+    print '<a href="categories.php">Configurer les catégories</a> puis ';
+    print '<a href="produits.php?mois='.$mois.'&annee='.$annee.'">assigner chaque produit</a> pour que les commissions Cdiscount soient calculées.';
+    print '</div>';
+}
 
 // Tableau produits
 print '<table class="noborder centpercent">';
@@ -113,10 +126,10 @@ if (empty($ventes)) {
         print '<td>'.dol_escape_htmltag($v['designation']).'</td>';
         print '<td><small>'.dol_escape_htmltag($v['cat_label'] ?: '—').'</small></td>';
         print '<td class="right">'.$v['qty_vendue'].'</td>';
-        print '<td class="right">'.price($c['ca']).'</td>';
-        print '<td class="right">'.price($c['commission']).' <small style="color:#888">('.$commLabel.')</small></td>';
-        print '<td class="right">'.price($c['cout_total']).'</td>';
-        print '<td class="right" style="font-weight:bold;color:'.($c['marge']>=0?'green':'red').'">'.price($c['marge']).'</td>';
+        print '<td class="right">'.roc_eur($c['ca']).'</td>';
+        print '<td class="right">'.roc_eur($c['commission']).' <small style="color:#888">('.$commLabel.')</small></td>';
+        print '<td class="right">'.roc_eur($c['cout_total']).'</td>';
+        print '<td class="right" style="font-weight:bold;color:'.($c['marge']>=0?'green':'red').'">'.roc_eur($c['marge']).'</td>';
         print '<td class="right">'.$c['taux_marge'].'%</td>';
         print '<td>'.$badge.'</td>';
         print '</tr>';

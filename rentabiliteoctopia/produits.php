@@ -172,13 +172,13 @@ if (empty($produits)) {
             print '<td><input type="number" name="commission_reel_'.$p['rowid'].'" value="'.$commReelVal.'" step="0.01" min="0" class="flat" style="width:75px;text-align:right" placeholder="—" onchange="recalc('.$p['rowid'].')"> €</td>';
         } else {
             print '<td class="right">'.(int)$v['qty_vendue'].'</td>';
-            print '<td class="right">'.price($v['prix_ht']).'</td>';
-            print '<td class="right">'.price($v['cout_achat']).'</td>';
+            print '<td class="right">'.roc_eur($v['prix_ht']).'</td>';
+            print '<td class="right">'.roc_eur($v['cout_achat']).'</td>';
             print '<td class="right">'.($commPctVal ?: $p['cat_pct']).'%</td>';
-            print '<td class="right">'.($commReelVal ? price($commReelVal).' €' : '—').'</td>';
+            print '<td class="right">'.($commReelVal ? roc_eur($commReelVal) : '—').'</td>';
         }
-        print '<td class="right" id="ca_'.$p['rowid'].'">'.price($ca).'</td>';
-        print '<td class="right" id="marge_'.$p['rowid'].'" style="font-weight:bold;color:'.$color.'">'.price($marge).'</td>';
+        print '<td class="right" id="ca_'.$p['rowid'].'">'.roc_eur($ca).'</td>';
+        print '<td class="right" id="marge_'.$p['rowid'].'" style="font-weight:bold;color:'.$color.'">'.roc_eur($marge).'</td>';
         print '<td class="right" id="taux_'.$p['rowid'].'" style="color:'.$color.'">'.$taux.'%</td>';
         print '<td>';
         if ($user->rights->rentabiliteoctopia->write) {
@@ -204,6 +204,13 @@ print '<script>
 var SEUIL = '.$seuilMarge.', TRET = '.$tauxRet.', CRET = '.$coutRet.';
 var CAT_PCTS = '.json_encode($catPcts).';
 
+function fmtEUR(n) {
+    // Format: "1 234,56 \u20ac" (style francais avec espace insecable et virgule)
+    var fixed = n.toFixed(2);
+    var parts = fixed.split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0");
+    return parts.join(",") + "\u00a0\u20ac";
+}
 function recalc(id) {
     var qty   = parseFloat(document.querySelector("[name=qty_vendue_"+id+"]").value)||0;
     var prix  = parseFloat(document.querySelector("[name=prix_ht_"+id+"]").value)||0;
@@ -222,8 +229,8 @@ function recalc(id) {
     var marge  = ca - qty*cout - comm - retour;
     var taux   = ca > 0 ? (marge/ca*100) : 0;
     var color  = taux >= SEUIL ? "green" : (taux >= 5 ? "orange" : "red");
-    document.getElementById("ca_"+id).textContent    = ca.toFixed(2) + " \u20ac";
-    document.getElementById("marge_"+id).textContent = marge.toFixed(2) + " \u20ac";
+    document.getElementById("ca_"+id).textContent    = fmtEUR(ca);
+    document.getElementById("marge_"+id).textContent = fmtEUR(marge);
     document.getElementById("marge_"+id).style.color = color;
     document.getElementById("taux_"+id).textContent  = taux.toFixed(1) + "%";
     document.getElementById("taux_"+id).style.color  = color;

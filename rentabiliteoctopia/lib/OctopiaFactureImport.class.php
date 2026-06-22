@@ -47,6 +47,7 @@ class OctopiaFactureImport
         '6231' => 'publicite',
         '623'  => 'publicite',
         '622'  => 'publicite',
+        '626'  => 'affranchissement',  // frais postaux - manquant dans la version originale
     );
 
     public function __construct($db, $entity = 1)
@@ -65,8 +66,22 @@ class OctopiaFactureImport
      */
     public function resolveTypePCG($compte, $mappingOverride = array())
     {
+        // Nettoyer le compte (trim espaces parasites)
+        $compte = trim((string)$compte);
+
+        // 1. EXACT MATCH prioritaire depuis le custom override (6 chiffres configures par l'admin)
+        //    Garantit que 622001 -> abonnement prime sur le prefixe 622 -> publicite
+        if (isset($mappingOverride[$compte])) {
+            return $mappingOverride[$compte];
+        }
+
+        // 2. Exact match dans le mapping par defaut
+        if (isset($this->mappingPCG[$compte])) {
+            return $this->mappingPCG[$compte];
+        }
+
+        // 3. Correspondance par prefixe (du plus long au plus court)
         $mapping = array_merge($this->mappingPCG, $mappingOverride);
-        // Tri par longueur décroissante pour matcher le plus précis d'abord
         uksort($mapping, function($a, $b) { return strlen($b) - strlen($a); });
         foreach ($mapping as $prefix => $type) {
             if (strpos($compte, (string)$prefix) === 0) return $type;
@@ -112,24 +127,28 @@ class OctopiaFactureImport
     {
         $this->log("=== Import frais fournisseur $annee-$mois (fk_soc=$fkFournisseur) ===");
 
-        // Agréger les montants HT par compte PCG depuis les factures validées du mois
+        // BUGFIX: la table llx_facture_fourn_det n'a pas de champ account_number.
+        // Le compte PCG est dans fk_code_ventilation -> llx_accounting_account.account_number
         $sql = "SELECT
-                    fd.account_number                   AS compte,
-                    fd.label                            AS libelle,
-                    SUM(fd.total_ht)                    AS montant_ht,
+                    aa.account_number                           AS compte,
+                    fd.label                                    AS libelle,
+                    SUM(fd.total_ht)                            AS montant_ht,
                     GROUP_CONCAT(DISTINCT f.ref SEPARATOR ', ') AS factures
                 FROM ".MAIN_DB_PREFIX."facture_fourn_det fd
                 INNER JOIN ".MAIN_DB_PREFIX."facture_fourn f
-                    ON f.rowid = fd.fk_facture_fourn
+                    ON  f.rowid     = fd.fk_facture_fourn
                     AND f.fk_soc    = ".(int)$fkFournisseur."
                     AND f.entity    = ".$this->entity."
                     AND f.fk_statut IN (1, 2)
                     AND YEAR(f.datef)  = ".(int)$annee."
                     AND MONTH(f.datef) = ".(int)$mois."
-                WHERE fd.account_number IS NOT NULL
-                  AND fd.account_number != ''
-                GROUP BY fd.account_number, fd.label
-                ORDER BY fd.account_number";
+                INNER JOIN ".MAIN_DB_PREFIX."accounting_account aa
+                    ON  aa.rowid = fd.fk_code_ventilation
+                    AND aa.account_number != ''
+                WHERE fd.fk_code_ventilation > 0
+                  AND aa.account_number LIKE '6%'
+                GROUP BY aa.account_number, fd.label
+                ORDER BY aa.account_number";
 
         $resql = $this->db->query($sql);
         if (!$resql) {

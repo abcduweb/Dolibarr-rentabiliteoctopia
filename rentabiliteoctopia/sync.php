@@ -190,7 +190,7 @@ if ($octopiaActive && !empty($statsOctopia)) {
         print '<td><b>'.$nomMois.' '.$s['annee'].'</b></td>';
         print '<td class="right">'.$s['nb_commandes'].'</td>';
         print '<td class="right">'.$s['nb_lignes'].'</td>';
-        print '<td class="right">'.price($s['ca_ht']).' €</td>';
+        print '<td class="right">'.roc_eur($s['ca_ht']).'</td>';
         print '<td>';
         print '<form method="POST" action="sync.php" style="display:inline">';
         print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';

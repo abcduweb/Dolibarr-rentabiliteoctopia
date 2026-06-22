@@ -32,18 +32,45 @@ if ($action === 'save') {
             'seuil_marge_pct', 'taux_retour_pct', 'cout_retour',
             'nom_fournisseur',
             'pcg_abonnement', 'pcg_fulfilment', 'pcg_affranchissement', 'pcg_packaging', 'pcg_publicite',
+            'daily_kpi_email', 'daily_kpi_enabled',
         );
         $ok = true;
+        // BUGFIX: GETPOST avec 'alpha' rejette chiffres+virgules.
+        // 'nohtml' filtre aussi parfois selon la version Dolibarr.
+        // On utilise 'restricthtml' qui autorise tout sauf le HTML dangereux,
+        // et on log ce qui est reellement recu pour faciliter le debug.
+        $debug_saved = array();
         foreach ($keys as $key) {
-            $val = GETPOST($key, 'alpha');
+            // Cas special : checkbox daily_kpi_enabled (absent du POST si decoche)
+            if ($key === 'daily_kpi_enabled') {
+                $val = isset($_POST['daily_kpi_enabled']) ? '1' : '0';
+            } else {
+                // Lecture directe POST (le plus fiable pour caracteres speciaux)
+                $val = '';
+                if (isset($_POST[$key])) {
+                    $val = trim((string)$_POST[$key]);
+                } else {
+                    $val = trim((string)GETPOST($key, 'restricthtml'));
+                }
+            }
+            $debug_saved[$key] = $val;
+
             $sql = "INSERT INTO ".MAIN_DB_PREFIX."rentabiliteoctopia_params (param_key, param_value, entity)
                     VALUES ('".$db->escape($key)."', '".$db->escape($val)."', ".((int)$conf->entity).")
                     ON DUPLICATE KEY UPDATE param_value = '".$db->escape($val)."'";
             if (!$db->query($sql)) $ok = false;
         }
+        // Debug : afficher ce qui a ete sauvegarde pour les pcg_*
+        $debug_msg = '';
+        foreach ($debug_saved as $k => $v) {
+            if (strpos($k, 'pcg_') === 0) {
+                $debug_msg .= $k.' = '.($v !== '' ? '"'.$v.'"' : '<vide>').' ';
+            }
+        }
+        if ($debug_msg) setEventMessages('Sauvegarde mapping : '.$debug_msg, null, 'mesgs');
 
         // Résolution automatique du fournisseur par nom
-        $nomFourn = GETPOST('nom_fournisseur', 'alpha');
+        $nomFourn = isset($_POST['nom_fournisseur']) ? trim((string)$_POST['nom_fournisseur']) : trim((string)GETPOST('nom_fournisseur', 'restricthtml'));
         if ($nomFourn) {
             $importer = new OctopiaFactureImport($db, $conf->entity);
             $fkFourn  = $importer->findFournisseur($nomFourn);
@@ -107,17 +134,17 @@ print '</table>';
 print '<table class="noborder centpercent" style="margin-bottom:20px;">';
 print '<tr class="liste_titre"><th colspan="3">Mapping comptes PCG → types de frais</th></tr>';
 print '<tr><td colspan="3" style="padding:8px;font-size:12px;color:#666;">';
-print 'Saisissez les <b>préfixes de comptes PCG</b> séparés par des virgules pour chaque type de frais. ';
-print 'Le matching se fait du plus long au plus court (ex: "6132" est prioritaire sur "613"). ';
-print 'Laissez vide pour utiliser le mapping par défaut.';
+print 'Saisissez les <b>comptes PCG exacts</b> (6 chiffres) ou des <b>préfixes</b>, séparés par des virgules. ';
+print '<b>Un compte exact (ex: 622001) est toujours prioritaire sur un préfixe (ex: 622).</b> ';
+print 'Laissez vide pour utiliser le mapping par défaut basé sur les préfixes PCG standards.';
 print '</td></tr>';
 
 $mappingDefaut = array(
-    'pcg_abonnement'      => array('label'=>'Abonnement',          'defaut'=>'613, 614',         'ex'=>'ex: 6132, 614'),
-    'pcg_fulfilment'      => array('label'=>'Fulfilment',           'defaut'=>'611',              'ex'=>'ex: 611, 6119'),
-    'pcg_affranchissement'=> array('label'=>'Affranchissement',     'defaut'=>'624, 625, 6241',   'ex'=>'ex: 6241, 625'),
-    'pcg_packaging'       => array('label'=>'Packaging',            'defaut'=>'604, 6044',        'ex'=>'ex: 6044, 604'),
-    'pcg_publicite'       => array('label'=>'Publicité / Sponsored','defaut'=>'622, 623, 6231',   'ex'=>'ex: 6231, 623'),
+    'pcg_abonnement'      => array('label'=>'Abonnement / Commissions',   'defaut'=>'622, 613, 614',       'ex'=>'ex: 622001, 613501'),
+    'pcg_fulfilment'      => array('label'=>'Fulfilment / Stockage',       'defaut'=>'611, 613',            'ex'=>'ex: 613501, 611001'),
+    'pcg_affranchissement'=> array('label'=>'Affranchissement / Transport','defaut'=>'626, 624, 625, 6241', 'ex'=>'ex: 626201, 624001'),
+    'pcg_packaging'       => array('label'=>'Packaging / Emballages',      'defaut'=>'604, 6044, 624',      'ex'=>'ex: 624001, 6044'),
+    'pcg_publicite'       => array('label'=>'Publicité / Sponsored',       'defaut'=>'623, 622, 6231',      'ex'=>'ex: 623101, 6231'),
 );
 foreach ($mappingDefaut as $key => $info) {
     $val = isset($params[$key]) && $params[$key] !== '' ? $params[$key] : '';
@@ -127,6 +154,26 @@ foreach ($mappingDefaut as $key => $info) {
     print '<td style="font-size:12px;color:#888">'.$info['ex'].'</td>';
     print '</tr>';
 }
+print '</table>';
+
+// ---- Rapport quotidien par email ----
+print '<table class="noborder centpercent" style="margin-bottom:20px;">';
+print '<tr class="liste_titre"><th colspan="3">Rapport quotidien des KPI par email</th></tr>';
+print '<tr><td colspan="3" style="padding:8px;font-size:12px;color:#666;">';
+print 'Recevez chaque matin un email avec les KPI Cdiscount de la veille (CA, marge brute, commandes, top produits). ';
+print 'Necessite l\'ajout d\'une tache cron sur o2switch (voir bas de page).';
+print '</td></tr>';
+print '<tr class="oddeven">';
+print '<td style="width:28%">Activer l\'envoi quotidien</td>';
+$enabled = !empty($params['daily_kpi_enabled']);
+print '<td style="width:40%"><label><input type="checkbox" name="daily_kpi_enabled" value="1"'.($enabled?' checked':'').'> Envoyer chaque matin</label></td>';
+print '<td style="font-size:12px;color:#888">Decoche pour suspendre les envois sans supprimer le cron</td>';
+print '</tr>';
+print '<tr class="oddeven">';
+print '<td>Email destinataire</td>';
+print '<td><input type="email" name="daily_kpi_email" class="flat" style="width:280px" value="'.dol_escape_htmltag($params['daily_kpi_email'] ?? '').'" placeholder="vous@exemple.fr"></td>';
+print '<td style="font-size:12px;color:#888">Une seule adresse. Pour plusieurs destinataires, separez par des virgules.</td>';
+print '</tr>';
 print '</table>';
 
 print '<input type="submit" class="button" value="Enregistrer les paramètres">';
@@ -150,6 +197,22 @@ foreach ($mappingRef as $pcg => $info) {
     print '<tr class="oddeven"><td><code>'.$pcg.'</code></td><td>'.$info[0].'</td><td style="color:#888;font-size:12px">'.$info[1].'</td></tr>';
 }
 print '</table>';
+
+// ---- Instructions cron ----
+print '<br><div style="background:#fffae6;border:1px solid #f1c40f;padding:14px;border-radius:4px;margin-top:20px;">';
+print '<h4 style="margin-top:0;">⏰ Configuration du cron quotidien</h4>';
+print '<p style="font-size:13px;">Ajoutez cette ligne dans <b>cPanel o2switch &rarr; Taches Cron</b> pour recevoir le rapport tous les matins a 8h :</p>';
+$cronCmd = '0 8 * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1';
+print '<code style="display:block;background:#fff;padding:10px;border-radius:4px;font-size:12px;word-break:break-all;border:1px solid #ddd;">'.dol_escape_htmltag($cronCmd).'</code>';
+print '<p style="font-size:12px;color:#666;margin-top:10px;">';
+print '<b>Pour tester manuellement :</b><br>';
+print '<code style="background:#fff;padding:4px 8px;border-radius:3px;border:1px solid #ddd;">php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php</code>';
+print '</p>';
+print '<p style="font-size:12px;color:#666;margin-top:10px;">';
+print '<b>Pour verifier les logs d\'envoi :</b><br>';
+print '<code style="background:#fff;padding:4px 8px;border-radius:3px;border:1px solid #ddd;">tail -50 /tmp/rentabiliteoctopia_daily.log</code>';
+print '</p>';
+print '</div>';
 
 llxFooter();
 $db->close();

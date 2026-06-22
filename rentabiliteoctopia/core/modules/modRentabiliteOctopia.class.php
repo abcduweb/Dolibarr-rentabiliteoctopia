@@ -26,9 +26,10 @@ class modRentabiliteOctopia extends DolibarrModules
 
         $this->module_parts = array('menus' => 1);
         $this->dirs = array();
-        // BUGFIX: pointe vers admin/admin.php (la vraie page admin complète)
-        // et non plus admin.php à la racine (page obsolète)
-        $this->config_page_url = array('admin/admin.php@rentabiliteoctopia');
+        // admin.php (racine) redirige vers admin/admin.php
+        // On ne met pas admin/admin.php directement car Dolibarr ne résout
+        // pas les sous-dossiers dans config_page_url depuis la liste des modules.
+        $this->config_page_url = array('admin.php@rentabiliteoctopia');
         $this->hidden = false;
         $this->depends = array();
         $this->requiredby = array();
@@ -80,6 +81,18 @@ class modRentabiliteOctopia extends DolibarrModules
         );
         $this->menu[$r++] = array(
             'fk_menu'  => 'fk_mainmenu=rentabiliteoctopia', 'type' => 'left',
+            'titre'    => 'Sante entreprise',
+            'prefix'   => '<i class="fa fa-heartbeat pictofixedwidth"></i>',
+            'mainmenu' => 'rentabiliteoctopia', 'leftmenu' => 'sante',
+            'url'      => '/rentabiliteoctopia/sante.php',
+            'langs'    => 'rentabiliteoctopia@rentabiliteoctopia',
+            'position' => 115,
+            'enabled'  => '$conf->rentabiliteoctopia->enabled',
+            'perms'    => '$user->rights->rentabiliteoctopia->read',
+            'target'   => '', 'user' => 2,
+        );
+        $this->menu[$r++] = array(
+            'fk_menu'  => 'fk_mainmenu=rentabiliteoctopia', 'type' => 'left',
             'titre'    => 'Produits & ventes',
             'prefix'   => '<i class="fa fa-boxes pictofixedwidth"></i>',
             'mainmenu' => 'rentabiliteoctopia', 'leftmenu' => 'produits',
@@ -122,6 +135,30 @@ class modRentabiliteOctopia extends DolibarrModules
             'url'      => '/rentabiliteoctopia/sync.php',
             'langs'    => 'rentabiliteoctopia@rentabiliteoctopia',
             'position' => 140,
+            'enabled'  => '$conf->rentabiliteoctopia->enabled',
+            'perms'    => '$user->rights->rentabiliteoctopia->write',
+            'target'   => '', 'user' => 2,
+        );
+        $this->menu[$r++] = array(
+            'fk_menu'  => 'fk_mainmenu=rentabiliteoctopia', 'type' => 'left',
+            'titre'    => 'Audit produits',
+            'prefix'   => '<i class="fa fa-search pictofixedwidth"></i>',
+            'mainmenu' => 'rentabiliteoctopia', 'leftmenu' => 'audit',
+            'url'      => '/rentabiliteoctopia/audit_produits.php',
+            'langs'    => 'rentabiliteoctopia@rentabiliteoctopia',
+            'position' => 145,
+            'enabled'  => '$conf->rentabiliteoctopia->enabled',
+            'perms'    => '$user->rights->rentabiliteoctopia->write',
+            'target'   => '', 'user' => 2,
+        );
+        $this->menu[$r++] = array(
+            'fk_menu'  => 'fk_mainmenu=rentabiliteoctopia', 'type' => 'left',
+            'titre'    => 'Affectation rapide',
+            'prefix'   => '<i class="fa fa-magic pictofixedwidth"></i>',
+            'mainmenu' => 'rentabiliteoctopia', 'leftmenu' => 'affectation',
+            'url'      => '/rentabiliteoctopia/affectation.php',
+            'langs'    => 'rentabiliteoctopia@rentabiliteoctopia',
+            'position' => 147,
             'enabled'  => '$conf->rentabiliteoctopia->enabled',
             'perms'    => '$user->rights->rentabiliteoctopia->write',
             'target'   => '', 'user' => 2,

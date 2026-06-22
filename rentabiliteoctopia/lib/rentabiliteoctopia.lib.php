@@ -5,6 +5,24 @@
  */
 
 /**
+ * Formate un montant en euros avec 2 decimales obligatoires et le symbole €.
+ * Utilise comme remplacement de price() pour garantir l'unicite du format.
+ *
+ * Ex: roc_eur(1234.5) => "1 234,50 €"
+ *     roc_eur(0)      => "0,00 €"
+ *     roc_eur(null)   => "0,00 €"
+ */
+if (!function_exists('roc_eur')) {
+    function roc_eur($montant)
+    {
+        $val = (float)$montant;
+        // price() Dolibarr (espace insecable + separateur) ; on force min 2 decimales et max 2
+        return price($val, 0, '', 1, 2, 2).' €';
+    }
+}
+
+
+/**
  * Retourne les paramètres généraux
  */
 function rentabiliteoctopia_get_params($db)

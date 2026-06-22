@@ -77,6 +77,9 @@ class OctopiaRentabiliteSync
             }
         }
 
+        // Synchroniser aussi les frais de port Octopia (lignes sans fk_product)
+        $this->syncFraisPort($annee, $mois);
+
         $this->log("Fin synchro : {$this->nb_ventes_maj} lignes mises à jour, {$this->nb_erreurs} erreur(s).");
         return ($this->nb_erreurs === 0);
     }
@@ -112,12 +115,24 @@ class OctopiaRentabiliteSync
         // Construire la liste des statuts exclus pour la clause NOT IN
         $exclus = implode("','", array_map(array($db, 'escape'), $this->statuts_exclus));
 
+        // BUGFIX: llx_commandedet n'a pas de champ 'ref'. La reference produit
+        // vient de llx_product via cd.fk_product. Pour les lignes libres (sans fk_product),
+        // on identifie le produit par son label.
+        //
+        // Resolution en cascade :
+        //  1. cd.fk_product > 0 -> p.ref direct
+        //  2. mapping manuel via le label -> pmap.ref
+        //  3. fallback : "ORPHELIN-<hash du label>" pour ne pas perdre le CA
         $sql = "SELECT
-                    p.ref                                       AS ref,
-                    p.label                                     AS designation,
-                    SUM(cd.qty)                                 AS qty_total,
-                    SUM(cd.qty * cd.subprice)                   AS ca_ht_total,
-                    MAX(COALESCE(p.cost_price, 0))              AS cout_achat
+                    COALESCE(
+                        p.ref,
+                        pmap.ref,
+                        CONCAT('ORPHELIN-', SUBSTRING(MD5(COALESCE(cd.label, cd.description, '')), 1, 10))
+                    )                                                             AS ref,
+                    COALESCE(p.label, pmap.label, cd.label, cd.description, '?')  AS designation,
+                    SUM(cd.qty)                                                   AS qty_total,
+                    SUM(cd.qty * cd.subprice)                                     AS ca_ht_total,
+                    MAX(COALESCE(p.cost_price, pmap.cost_price, 0))               AS cout_achat
                 FROM ".MAIN_DB_PREFIX."octopia_orders o
                 INNER JOIN ".MAIN_DB_PREFIX."commande c
                     ON  c.rowid  = o.dolibarr_order_id
@@ -127,17 +142,29 @@ class OctopiaRentabiliteSync
                     AND c.fk_statut >= 1
                 INNER JOIN ".MAIN_DB_PREFIX."commandedet cd
                     ON  cd.fk_commande = c.rowid
-                    AND cd.fk_product  > 0
-                INNER JOIN ".MAIN_DB_PREFIX."product p
+                LEFT  JOIN ".MAIN_DB_PREFIX."product p
                     ON  p.rowid = cd.fk_product
                     AND p.entity IN (0, ".$this->entity.")
+                LEFT  JOIN ".MAIN_DB_PREFIX."rentabiliteoctopia_mapping_ref mr
+                    ON  mr.ref_octopia = COALESCE(p.ref, LEFT(COALESCE(cd.label, cd.description, ''), 64))
+                    AND mr.entity      = ".$this->entity."
+                LEFT  JOIN ".MAIN_DB_PREFIX."product pmap
+                    ON  pmap.rowid = mr.fk_product_dolibarr
                 WHERE o.entity = ".$this->entity."
                   AND o.is_refunded = 0
                   AND (o.octopia_order_status IS NULL
                     OR o.octopia_order_status NOT IN ('".$exclus."'))
                   AND o.dolibarr_order_id IS NOT NULL
-                GROUP BY p.ref, p.label
-                ORDER BY p.ref";
+                  -- Exclure les lignes totalement vides (frais de port Cdiscount)
+                  AND NOT (cd.fk_product IS NULL
+                           AND (cd.label IS NULL OR cd.label = '')
+                           AND (cd.description IS NULL OR cd.description = ''))
+                GROUP BY COALESCE(
+                    p.ref,
+                    pmap.ref,
+                    CONCAT('ORPHELIN-', SUBSTRING(MD5(COALESCE(cd.label, cd.description, '')), 1, 10))
+                )
+                ORDER BY 1";
 
         $resql = $db->query($sql);
         if (!$resql) {

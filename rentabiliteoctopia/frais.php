@@ -146,7 +146,7 @@ if ($fkFourn <= 0) {
     if ($nbFact === 0) {
         print '<span style="color:#888">Aucune facture fournisseur validée trouvée pour '.$nomFourn.' sur '.$moisNoms[$mois].' '.$annee.'.</span>';
     } else {
-        print '<span style="color:#27ae60"><b>'.$nbFact.' facture(s)</b> trouvée(s) — total HT : <b>'.price($caHT).' €</b></span><br><br>';
+        print '<span style="color:#27ae60"><b>'.$nbFact.' facture(s)</b> trouvée(s) — total HT : <b>'.roc_eur($caHT).'</b></span><br><br>';
         // Aperçu (POST avec token)
         print '<form method="POST" action="frais.php" style="display:inline;">';
         print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
@@ -174,11 +174,11 @@ if ($apercu !== null && $importer !== null) {
         if (empty($data['lignes'])) continue;
         print '<tr class="oddeven">';
         print '<td><b>'.dol_escape_htmltag($labelsTypes[$type]).'</b></td>';
-        print '<td class="right"><b>'.price($data['montant']).' €</b></td>';
+        print '<td class="right"><b>'.roc_eur($data['montant']).'</b></td>';
         print '<td style="font-size:12px;">';
         foreach ($data['lignes'] as $l) {
             print '<span style="color:#444">'.dol_escape_htmltag($l['compte']).'</span> ';
-            print '<span style="color:#888">'.dol_escape_htmltag($l['libelle']).'</span> ('.price($l['montant']).' €)<br>';
+            print '<span style="color:#888">'.dol_escape_htmltag($l['libelle']).'</span> ('.roc_eur($l['montant']).')<br>';
         }
         print '</td>';
         print '<td style="font-size:11px;color:#888">'.dol_escape_htmltag($data['lignes'][0]['factures'] ?? '').'</td>';
@@ -226,7 +226,7 @@ foreach ($labelsTypes as $type => $defLabel) {
 }
 print '<tr class="liste_titre">';
 print '<td colspan="2"><b>Total frais fixes</b></td>';
-print '<td id="totalFreais" style="font-weight:bold;text-align:right">'.price($total).' €</td>';
+print '<td id="totalFreais" style="font-weight:bold;text-align:right">'.roc_eur($total).'</td>';
 print '<td></td></tr>';
 print '</table>';
 print '<br><input type="submit" class="button" value="Enregistrer les frais manuellement">';
@@ -234,12 +234,18 @@ print ' &nbsp; <a href="index.php?mois='.$mois.'&annee='.$annee.'" class="button
 print '</form>';
 
 print '<script>
+function fmtEUR(n) {
+    var fixed = n.toFixed(2);
+    var parts = fixed.split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0");
+    return parts.join(",") + "\u00a0\u20ac";
+}
 function majTotal() {
     var total = 0;
     ["abonnement","fulfilment","affranchissement","packaging","publicite","autre"].forEach(function(t) {
         total += parseFloat(document.getElementById("mt_"+t).value)||0;
     });
-    document.getElementById("totalFreais").textContent = total.toFixed(2).replace(".", ",") + " \u20ac";
+    document.getElementById("totalFreais").textContent = fmtEUR(total);
 }
 </script>';
 
