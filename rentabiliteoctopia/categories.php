@@ -17,9 +17,11 @@ $id     = GETPOST('id', 'int');
 
 if ($action === 'save_cat') {
     $token = GETPOST('token', 'alpha');
-    if (!newToken() || $token !== $_SESSION['newtoken']) {
+    // BUGFIX CSRF: comparaison directe sans appeler newToken() avant
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
         setEventMessages('Token invalide', null, 'errors');
     } else {
+        newToken();
         $code   = strtoupper(preg_replace('/[^A-Z0-9_]/i', '_', GETPOST('code', 'alpha')));
         $label  = GETPOST('label', 'alpha');
         $pct    = (float)str_replace(',', '.', GETPOST('commission_pct', 'alpha'));
@@ -37,9 +39,18 @@ if ($action === 'save_cat') {
 }
 
 if ($action === 'delete' && $id > 0) {
-    $db->query("UPDATE ".MAIN_DB_PREFIX."rentabiliteoctopia_produit SET fk_categorie=NULL WHERE fk_categorie=".(int)$id." AND entity=".((int)$conf->entity));
-    $db->query("DELETE FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie WHERE rowid=".(int)$id." AND entity=".((int)$conf->entity));
-    header('Location: categories.php'); exit;
+    // BUGFIX CSRF: la suppression via GET sans token est une faille CSRF.
+    // On exige maintenant un token POST pour toute suppression.
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide — suppression refusée', null, 'errors');
+    } else {
+        newToken();
+        $db->query("UPDATE ".MAIN_DB_PREFIX."rentabiliteoctopia_produit SET fk_categorie=NULL WHERE fk_categorie=".(int)$id." AND entity=".((int)$conf->entity));
+        $db->query("DELETE FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie WHERE rowid=".(int)$id." AND entity=".((int)$conf->entity));
+        setEventMessages('Catégorie supprimée', null, 'mesgs');
+        header('Location: categories.php'); exit;
+    }
 }
 
 $categories = rentabiliteoctopia_get_categories($db);
@@ -47,10 +58,12 @@ $categories = rentabiliteoctopia_get_categories($db);
 llxHeader('', 'Catégories produits');
 print load_fiche_titre('Catégories & taux de commission Cdiscount', '', 'fa-tags');
 
+$currentToken = isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : newToken();
+
 // Formulaire ajout/édition
 $editCat = $id > 0 && isset($categories[$id]) ? $categories[$id] : null;
 print '<form method="POST" action="categories.php" style="margin-bottom:16px;">';
-print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : newToken()).'">';
+print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
 print '<input type="hidden" name="action" value="save_cat">';
 print '<input type="hidden" name="id" value="'.($editCat ? $editCat['rowid'] : 0).'">';
 print '<table class="noborder"><tr class="liste_titre"><td colspan="4">'.($editCat ? 'Modifier' : 'Ajouter').' une catégorie</td></tr>';
@@ -80,7 +93,13 @@ foreach ($categories as $cat) {
     print '<td class="right">';
     print '<a href="categories.php?id='.$cat['rowid'].'" class="editfielda">'.img_edit().'</a> ';
     if (empty($nbProds[$cat['rowid']])) {
-        print '<a href="categories.php?action=delete&id='.$cat['rowid'].'" class="butActionDelete smallpaddingimp" onclick="return confirm(\'Supprimer ?\')">×</a>';
+        // BUGFIX CSRF: suppression via formulaire POST avec token (plus via GET)
+        print '<form method="POST" action="categories.php" style="display:inline">';
+        print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
+        print '<input type="hidden" name="action" value="delete">';
+        print '<input type="hidden" name="id" value="'.$cat['rowid'].'">';
+        print '<button type="submit" class="butActionDelete smallpaddingimp" onclick="return confirm(\'Supprimer ?\')">×</button>';
+        print '</form>';
     }
     print '</td>';
     print '</tr>';

@@ -22,8 +22,8 @@ $action = GETPOST('action', 'alpha');
 $params = rentabiliteoctopia_get_params($db);
 
 // Récupérer le fournisseur configuré
-$fkFourn    = isset($params['fk_fournisseur']) ? (int)$params['fk_fournisseur'] : 0;
-$nomFourn   = isset($params['nom_fournisseur']) ? $params['nom_fournisseur'] : 'Cdiscount';
+$fkFourn  = isset($params['fk_fournisseur']) ? (int)$params['fk_fournisseur'] : 0;
+$nomFourn = isset($params['nom_fournisseur']) ? $params['nom_fournisseur'] : 'Cdiscount';
 
 // Mapping PCG personnalisé depuis les params
 $mappingOverride = array();
@@ -38,15 +38,17 @@ foreach ($mappingKeys as $mk) {
     }
 }
 
-$importer  = null;
-$apercu    = null;
+$importer = null;
+$apercu   = null;
 
 // -- Actions --
 if ($action === 'save_frais') {
     $token = GETPOST('token', 'alpha');
-    if (!newToken() || $token !== $_SESSION['newtoken']) {
+    // BUGFIX CSRF: comparaison directe sans régénérer le token avant
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
         setEventMessages('Token invalide', null, 'errors');
     } else {
+        newToken();
         $typesFreais = array('abonnement','fulfilment','affranchissement','packaging','publicite','autre');
         $ok = true;
         foreach ($typesFreais as $type) {
@@ -65,17 +67,24 @@ if ($action === 'save_frais') {
     }
 }
 
+// BUGFIX: apercu_import nécessite aussi un token (même si lecture seule, cohérence CSRF)
 if ($action === 'apercu_import' && $fkFourn > 0) {
-    // Mode aperçu : on calcule sans écrire
-    $importer = new OctopiaFactureImport($db, $conf->entity);
-    $apercu   = $importer->importMois($annee, $mois, $fkFourn, $mappingOverride, true);
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide', null, 'errors');
+    } else {
+        $importer = new OctopiaFactureImport($db, $conf->entity);
+        $apercu   = $importer->importMois($annee, $mois, $fkFourn, $mappingOverride, true);
+    }
 }
 
 if ($action === 'import_factures' && $fkFourn > 0) {
     $token = GETPOST('token', 'alpha');
-    if (!newToken() || $token !== $_SESSION['newtoken']) {
+    // BUGFIX CSRF: même correction
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
         setEventMessages('Token invalide', null, 'errors');
     } else {
+        newToken();
         $importer = new OctopiaFactureImport($db, $conf->entity);
         $apercu   = $importer->importMois($annee, $mois, $fkFourn, $mappingOverride, false);
         if ($importer->nb_erreurs === 0) {
@@ -112,6 +121,8 @@ print '</select>';
 print '<input type="submit" class="button" value="Filtrer">';
 print '</form>';
 
+$currentToken = isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : newToken();
+
 // ---- SECTION IMPORT AUTOMATIQUE ----
 print '<div style="background:var(--colorbacktitle,#f0f0f0);border-radius:4px;padding:12px 16px;margin-bottom:20px;">';
 print '<b><i class="fa fa-magic"></i> Import automatique depuis les factures fournisseur</b><br><br>';
@@ -122,13 +133,12 @@ if ($fkFourn <= 0) {
     print '<a href="admin/admin.php">Configurer dans Paramètres</a>';
     print '</div>';
 } else {
-    // Vérifier si des factures existent pour ce mois
     $sql = "SELECT COUNT(*) AS nb, SUM(f.total_ht) AS ca_ht
             FROM ".MAIN_DB_PREFIX."facture_fourn f
             WHERE f.fk_soc = ".$fkFourn." AND f.entity = ".((int)$conf->entity)."
               AND f.fk_statut IN (1,2)
               AND YEAR(f.datef) = ".(int)$annee." AND MONTH(f.datef) = ".(int)$mois;
-    $resql = $db->query($sql);
+    $resql    = $db->query($sql);
     $statFact = $db->fetch_object($resql);
     $nbFact   = $statFact ? (int)$statFact->nb : 0;
     $caHT     = $statFact ? (float)$statFact->ca_ht : 0;
@@ -137,13 +147,16 @@ if ($fkFourn <= 0) {
         print '<span style="color:#888">Aucune facture fournisseur validée trouvée pour '.$nomFourn.' sur '.$moisNoms[$mois].' '.$annee.'.</span>';
     } else {
         print '<span style="color:#27ae60"><b>'.$nbFact.' facture(s)</b> trouvée(s) — total HT : <b>'.price($caHT).' €</b></span><br><br>';
+        // Aperçu (POST avec token)
         print '<form method="POST" action="frais.php" style="display:inline;">';
+        print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
         print '<input type="hidden" name="annee" value="'.$annee.'"><input type="hidden" name="mois" value="'.$mois.'">';
         print '<input type="hidden" name="action" value="apercu_import">';
         print '<button type="submit" class="button">Aperçu de l\'import</button>';
         print '</form>&nbsp;&nbsp;';
+        // Import réel
         print '<form method="POST" action="frais.php" style="display:inline;">';
-        print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : newToken()).'">';
+        print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
         print '<input type="hidden" name="annee" value="'.$annee.'"><input type="hidden" name="mois" value="'.$mois.'">';
         print '<input type="hidden" name="action" value="import_factures">';
         print '<button type="submit" class="button butAction" onclick="return confirm(\'Écraser les frais actuels avec ceux des factures ?\')">Importer et enregistrer</button>';
@@ -172,7 +185,6 @@ if ($apercu !== null && $importer !== null) {
         print '</tr>';
     }
     print '</table>';
-    // Logs détaillés
     print '<details style="font-size:12px;margin-bottom:16px;"><summary style="cursor:pointer;color:#888">Logs détaillés</summary>';
     print '<div style="background:#f9f9f9;border:1px solid #ddd;border-radius:4px;padding:10px;max-height:200px;overflow-y:auto;">';
     print $importer->getLogsHtml();
@@ -181,7 +193,7 @@ if ($apercu !== null && $importer !== null) {
 
 // ---- SAISIE MANUELLE ----
 print '<form method="POST" action="frais.php">';
-print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : newToken()).'">';
+print '<input type="hidden" name="token" value="'.dol_escape_htmltag($currentToken).'">';
 print '<input type="hidden" name="action" value="save_frais">';
 print '<input type="hidden" name="mois" value="'.$mois.'"><input type="hidden" name="annee" value="'.$annee.'">';
 

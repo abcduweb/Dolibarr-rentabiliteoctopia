@@ -1,6 +1,6 @@
 <?php
 /**
- * Module RentabiliteOctopia pour Dolibarr v1.2
+ * Module RentabiliteOctopia pour Dolibarr v1.2.1
  */
 
 include_once DOL_DOCUMENT_ROOT.'/core/modules/DolibarrModules.class.php';
@@ -20,13 +20,15 @@ class modRentabiliteOctopia extends DolibarrModules
         $this->description = 'Tableau de rentabilité mensuelle des ventes Octopia/Cdiscount';
         $this->editor_name = 'ABCduWeb';
         $this->editor_url = 'https://www.abcduweb.fr';
-        $this->version = '1.2.0';
+        $this->version = '1.2.1';
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
         $this->picto = 'fa-chart-line';
 
         $this->module_parts = array('menus' => 1);
         $this->dirs = array();
-        $this->config_page_url = array('admin.php@rentabiliteoctopia');
+        // BUGFIX: pointe vers admin/admin.php (la vraie page admin complète)
+        // et non plus admin.php à la racine (page obsolète)
+        $this->config_page_url = array('admin/admin.php@rentabiliteoctopia');
         $this->hidden = false;
         $this->depends = array();
         $this->requiredby = array();
@@ -48,7 +50,7 @@ class modRentabiliteOctopia extends DolibarrModules
         $this->rights[$r][3] = 0;
         $this->rights[$r][4] = 'write';
 
-        // Menu — top: fk_menu=''  /  left: fk_menu='fk_mainmenu=rentabiliteoctopia'
+        // Menu
         $this->menu = array();
         $r = 0;
 
@@ -144,14 +146,11 @@ class modRentabiliteOctopia extends DolibarrModules
 
     /**
      * Création des tables à l'activation du module
-     * _load_tables() lit chaque fichier sql/llx_*.sql dans l'ordre alphabétique
-     * puis exécute sql/data.sql pour les données par défaut
      */
     public function init($options = '')
     {
         global $conf;
 
-        // Création des tables via les fichiers sql/llx_*.sql
         $result = $this->_load_tables('/rentabiliteoctopia/sql/');
         if ($result < 0) return -1;
 

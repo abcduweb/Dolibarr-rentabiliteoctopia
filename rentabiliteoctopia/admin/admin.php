@@ -12,15 +12,22 @@ require_once __DIR__.'/../lib/rentabiliteoctopia.lib.php';
 require_once __DIR__.'/../lib/OctopiaFactureImport.class.php';
 
 if (!$user->rights->rentabiliteoctopia->write) accessforbidden();
-$langs->load('rentabiliteoctopia@rentabiliteocternity');
+// BUGFIX: était 'rentabiliteocternity' (typo) — corrigé en 'rentabiliteoctopia'
+$langs->load('rentabiliteoctopia@rentabiliteoctopia');
 
 $action = GETPOST('action', 'alpha');
 
 if ($action === 'save') {
     $token = GETPOST('token', 'alpha');
-    if (!newToken() || $token !== $_SESSION['newtoken']) {
+    // BUGFIX CSRF: on compare le token soumis avec $_SESSION['newtoken'] AVANT
+    // tout appel à newToken() qui régénèrerait la valeur en session.
+    // L'ancien code appelait newToken() dans la condition, écrasant le token
+    // de session AVANT la comparaison → vérification toujours fausse.
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
         setEventMessages('Token invalide', null, 'errors');
     } else {
+        // Régénérer le token après usage (bonne pratique)
+        newToken();
         $keys = array(
             'seuil_marge_pct', 'taux_retour_pct', 'cout_retour',
             'nom_fournisseur',
@@ -106,11 +113,11 @@ print 'Laissez vide pour utiliser le mapping par défaut.';
 print '</td></tr>';
 
 $mappingDefaut = array(
-    'pcg_abonnement'      => array('label'=>'Abonnement',         'defaut'=>'613, 614',         'ex'=>'ex: 6132, 614'),
-    'pcg_fulfilment'      => array('label'=>'Fulfilment',          'defaut'=>'611',              'ex'=>'ex: 611, 6119'),
-    'pcg_affranchissement'=> array('label'=>'Affranchissement',    'defaut'=>'624, 625, 6241',   'ex'=>'ex: 6241, 625'),
-    'pcg_packaging'       => array('label'=>'Packaging',           'defaut'=>'604, 6044',        'ex'=>'ex: 6044, 604'),
-    'pcg_publicite'       => array('label'=>'Publicité / Sponsored','defaut'=>'622, 623, 6231',  'ex'=>'ex: 6231, 623'),
+    'pcg_abonnement'      => array('label'=>'Abonnement',          'defaut'=>'613, 614',         'ex'=>'ex: 6132, 614'),
+    'pcg_fulfilment'      => array('label'=>'Fulfilment',           'defaut'=>'611',              'ex'=>'ex: 611, 6119'),
+    'pcg_affranchissement'=> array('label'=>'Affranchissement',     'defaut'=>'624, 625, 6241',   'ex'=>'ex: 6241, 625'),
+    'pcg_packaging'       => array('label'=>'Packaging',            'defaut'=>'604, 6044',        'ex'=>'ex: 6044, 604'),
+    'pcg_publicite'       => array('label'=>'Publicité / Sponsored','defaut'=>'622, 623, 6231',   'ex'=>'ex: 6231, 623'),
 );
 foreach ($mappingDefaut as $key => $info) {
     $val = isset($params[$key]) && $params[$key] !== '' ? $params[$key] : '';
