@@ -1,0 +1,4 @@
+[21-Jun-2026 12:42:47 UTC] PHP Warning:  Undefined array key "commission_pct" in /home/vfko3666/public_html/abcduweb/comptabilite/prod_2024/custom/rentabiliteoctopia/admin.php on line 66
+[21-Jun-2026 12:42:47 UTC] PHP Warning:  Undefined array key "abonnement_mois" in /home/vfko3666/public_html/abcduweb/comptabilite/prod_2024/custom/rentabiliteoctopia/admin.php on line 66
+[21-Jun-2026 12:42:47 UTC] PHP Warning:  Undefined array key "expedition_moy" in /home/vfko3666/public_html/abcduweb/comptabilite/prod_2024/custom/rentabiliteoctopia/admin.php on line 66
+[21-Jun-2026 12:42:47 UTC] PHP Warning:  Undefined array key "retour_cout" in /home/vfko3666/public_html/abcduweb/comptabilite/prod_2024/custom/rentabiliteoctopia/admin.php on line 66

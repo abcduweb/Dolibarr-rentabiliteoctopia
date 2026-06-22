@@ -1,0 +1,7 @@
+# French language file for rentabiliteoctopia module
+# Module: RentabiliteOctopia
+# Author: ABCduWeb
+
+Module102=Rentabilité Octopia
+Module102Desc=Tableau de rentabilité mensuelle des ventes Octopia/Cdiscount
+RentabiliteOctopiaSetup=Paramètres Rentabilité Octopia
