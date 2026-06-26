@@ -17,6 +17,10 @@
  *   llx_rentabiliteoctopia_vente    : agrégats mensuels qty + CA + cout_achat
  */
 
+require_once __DIR__.'/CacheMois.class.php';
+
+require_once __DIR__.'/PrixHistorique.class.php';
+
 class OctopiaRentabiliteSync
 {
     /** @var DoliDB */
@@ -77,8 +81,26 @@ class OctopiaRentabiliteSync
             }
         }
 
-        // Synchroniser aussi les frais de port Octopia (lignes sans fk_product)
-        $this->syncFraisPort($annee, $mois);
+        // NOTE: on ne synchronise PAS les frais de port Octopia comme charges.
+        // Les frais de port factures aux clients sont un REVENU (CA reverse par Cdiscount),
+        // pas une charge. Les charges reelles de transport viennent des factures
+        // fournisseur Cdiscount (PCG 624/626) via OctopiaFactureImport.
+
+        // Invalider le cache du mois synchronise (force recalcul au prochain affichage)
+        try {
+            $cache = new CacheMois($this->db, $this->entity);
+            $cache->invalidate((int)$annee, (int)$mois);
+        } catch (Exception $e) {
+            // Cache non critique - on ignore les erreurs de cache
+        }
+
+        // Capturer le snapshot de prix de l'annee synchronisee (historique)
+        try {
+            $histoPrix = new PrixHistorique($this->db, $this->entity);
+            $histoPrix->capturer((int)$annee);
+        } catch (Exception $e) {
+            // Historique non critique
+        }
 
         $this->log("Fin synchro : {$this->nb_ventes_maj} lignes mises à jour, {$this->nb_erreurs} erreur(s).");
         return ($this->nb_erreurs === 0);

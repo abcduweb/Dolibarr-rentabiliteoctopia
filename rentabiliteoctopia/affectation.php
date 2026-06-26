@@ -96,7 +96,8 @@ $sql = "SELECT
             ON v.fk_produit = p.rowid AND v.annee = ".$annee." AND v.entity = ".((int)$conf->entity)."
         WHERE p.entity = ".((int)$conf->entity)."
         GROUP BY p.rowid, p.ref, p.designation, p.fk_categorie, c.code, c.label, c.commission_pct
-        ORDER BY ca_an DESC, p.ref";
+        ORDER BY ca_an DESC, p.ref
+        LIMIT 2000";
 
 $resql = $db->query($sql);
 $produits = array();

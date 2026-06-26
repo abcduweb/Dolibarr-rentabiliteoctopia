@@ -9,6 +9,7 @@ if (!$res && file_exists('../../../../main.inc.php')) $res = @include '../../../
 if (!$res) die('Include of main fails');
 
 require_once __DIR__.'/../lib/rentabiliteoctopia.lib.php';
+require_once __DIR__.'/../lib/CacheMois.class.php';
 require_once __DIR__.'/../lib/OctopiaFactureImport.class.php';
 
 if (!$user->rights->rentabiliteoctopia->write) accessforbidden();
@@ -16,6 +17,140 @@ if (!$user->rights->rentabiliteoctopia->write) accessforbidden();
 $langs->load('rentabiliteoctopia@rentabiliteoctopia');
 
 $action = GETPOST('action', 'alpha');
+
+if ($action === 'purge_cache') {
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide', null, 'errors');
+    } else {
+        newToken();
+        try {
+            $c = new CacheMois($db, $conf->entity);
+            $c->invalidateAll();
+            setEventMessages('Cache vide. Les agregats mensuels seront recalcules au prochain affichage.', null, 'mesgs');
+        } catch (Exception $e) {
+            setEventMessages('Erreur purge cache : '.$e->getMessage(), null, 'errors');
+        }
+    }
+}
+
+if ($action === 'cleanup_orphelins') {
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide', null, 'errors');
+    } else {
+        newToken();
+        // Approche en 3 etapes (compatible MariaDB strict) :
+        // 1. Recuperer les IDs des produits orphelins (sans JOIN DELETE)
+        // 2. Supprimer leurs ventes via WHERE fk_produit IN (...)
+        // 3. Supprimer les produits
+
+        $ids = array();
+        $sqlGet = "SELECT rowid FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_produit
+                   WHERE (ref LIKE 'ORPHELIN-%' OR ref LIKE 'LIBRE:%')
+                     AND entity = ".((int)$conf->entity);
+        $rGet = $db->query($sqlGet);
+        if (!$rGet) {
+            setEventMessages('Erreur SELECT produits orphelins : '.$db->lasterror(), null, 'errors');
+        } else {
+            while ($o = $db->fetch_object($rGet)) {
+                $ids[] = (int)$o->rowid;
+            }
+
+            $nbV = 0; $nbP = 0;
+
+            if (empty($ids)) {
+                setEventMessages('Aucun produit orphelin a nettoyer.', null, 'mesgs');
+            } else {
+                $idsList = implode(',', $ids);
+
+                // Etape 1 : supprimer les ventes liees
+                $sql1 = "DELETE FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_vente
+                         WHERE fk_produit IN (".$idsList.")
+                           AND entity = ".((int)$conf->entity);
+                $r1 = $db->query($sql1);
+                if (!$r1) {
+                    setEventMessages('Erreur DELETE ventes : '.$db->lasterror(), null, 'errors');
+                } else {
+                    $nbV = $db->affected_rows();
+
+                    // Etape 2 : supprimer les produits eux-memes
+                    $sql2 = "DELETE FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_produit
+                             WHERE rowid IN (".$idsList.")
+                               AND entity = ".((int)$conf->entity);
+                    $r2 = $db->query($sql2);
+                    if (!$r2) {
+                        setEventMessages('Erreur DELETE produits : '.$db->lasterror().' (les ventes ont ete supprimees mais pas les produits)', null, 'errors');
+                    } else {
+                        $nbP = $db->affected_rows();
+                        try { $c = new CacheMois($db, $conf->entity); $c->invalidateAll(); } catch (Exception $e) {}
+                        setEventMessages($nbV.' ligne(s) de vente + '.$nbP.' produit(s) artificiel(s) supprime(s). Relancez une synchronisation Octopia pour recalculer proprement.', null, 'mesgs');
+                    }
+                }
+            }
+        }
+    }
+}
+
+if ($action === 'fix_category_encoding') {
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide', null, 'errors');
+    } else {
+        newToken();
+        // Corriger les double-encodages UTF-8 dans les libelles de categories
+        // Ex: "TAÃ©lAÃ©phonie" -> "Telephonie"
+        $sql = "SELECT rowid, label FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie WHERE entity = ".((int)$conf->entity);
+        $r = $db->query($sql);
+        $nbFix = 0;
+        while ($r && $o = $db->fetch_object($r)) {
+            // Detection : la chaine contient des sequences UTF-8 mal encodees
+            $fixed = $o->label;
+            // Tentative de decodage UTF-8 double : si la chaine est valide UTF-8 ET contient des sequences caracteristiques de double-encodage
+            $hasDoubleEncoding = (
+                strpos($fixed, "Ã") !== false ||  // A avec tilde (typique double encoding)
+                strpos($fixed, "Â") !== false ||  // A circonflexe
+                strpos($fixed, "�") !== false
+            );
+            if ($hasDoubleEncoding) {
+                $tentative = @utf8_decode($fixed);
+                if ($tentative && $tentative !== $fixed) {
+                    // Verifier que le resultat est de l'UTF-8 valide (ou ASCII pur)
+                    if (mb_check_encoding($tentative, 'UTF-8') || mb_check_encoding($tentative, 'ASCII')) {
+                        $sqlU = "UPDATE ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie
+                                 SET label = '".$db->escape($tentative)."'
+                                 WHERE rowid = ".(int)$o->rowid;
+                        if ($db->query($sqlU)) $nbFix++;
+                    }
+                }
+            }
+        }
+        if ($nbFix > 0) {
+            setEventMessages($nbFix.' libelle(s) de categorie corrige(s). Verifiez sur la page Categories & commissions.', null, 'mesgs');
+        } else {
+            setEventMessages('Aucune categorie a corriger (encodage deja propre).', null, 'mesgs');
+        }
+    }
+}
+
+if ($action === 'cleanup_port_charges') {
+    $token = GETPOST('token', 'alpha');
+    if (empty($token) || $token !== $_SESSION['newtoken']) {
+        setEventMessages('Token invalide', null, 'errors');
+    } else {
+        newToken();
+        // Nettoyage des anciennes entrees "Port Octopia (auto)" enregistrees a tort en charges.
+        // Les frais de port factures aux clients sont un revenu, pas une charge.
+        $sql = "DELETE FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_frais
+                WHERE label LIKE 'Port Octopia (auto%' AND entity = ".((int)$conf->entity);
+        if ($db->query($sql)) {
+            $nb = $db->affected_rows();
+            setEventMessages('Nettoyage : '.$nb.' entree(s) "Port Octopia (auto)" supprimee(s) des frais. Les frais de port factures aux clients sont desormais comptes dans le CA, pas en charge.', null, 'mesgs');
+        } else {
+            setEventMessages('Erreur nettoyage : '.$db->lasterror(), null, 'errors');
+        }
+    }
+}
 
 if ($action === 'send_test_mail') {
     $token = GETPOST('token', 'alpha');
@@ -64,6 +199,7 @@ if ($action === 'save') {
             'daily_kpi_show_kpis', 'daily_kpi_show_compare_j2', 'daily_kpi_show_compare_week',
             'daily_kpi_show_detail_ca', 'daily_kpi_show_top_produits', 'daily_kpi_top_n',
             'daily_kpi_show_cumul_mois', 'daily_kpi_show_seuil_alert', 'daily_kpi_period',
+            'daily_kpi_send_hour', 'daily_kpi_show_alertes',
         );
         $ok = true;
         // BUGFIX: GETPOST avec 'alpha' rejette chiffres+virgules.
@@ -236,6 +372,19 @@ print '</select></td>';
 print '<td style="font-size:12px;color:#888">Periode prise comme reference pour les KPI</td>';
 print '</tr>';
 
+// Heure d'envoi (utilise uniquement pour generer la ligne cron a coller)
+$hourSend = isset($params['daily_kpi_send_hour']) && $params['daily_kpi_send_hour'] !== '' ? (int)$params['daily_kpi_send_hour'] : 8;
+print '<tr class="oddeven">';
+print '<td><b>Heure d\'envoi souhaitee</b></td>';
+print '<td><select name="daily_kpi_send_hour" class="flat">';
+for ($h = 0; $h < 24; $h++) {
+    $sel = ($hourSend === $h) ? ' selected' : '';
+    print '<option value="'.$h.'"'.$sel.'>'.str_pad($h, 2, '0', STR_PAD_LEFT).':00</option>';
+}
+print '</select></td>';
+print '<td style="font-size:12px;color:#888">Sert a generer la ligne cron ci-dessous (l\'envoi reel depend du cron cPanel)</td>';
+print '</tr>';
+
 // Sections du mail (header)
 print '<tr class="liste_titre"><th colspan="3" style="padding-top:10px;">Sections a inclure dans le mail</th></tr>';
 
@@ -247,6 +396,7 @@ $sections = array(
     array('daily_kpi_show_top_produits', $showTop,     'Top produits du jour',    'Tableau des meilleures ventes (configurable ci-dessous)'),
     array('daily_kpi_show_cumul_mois',   $showCumul,   'Cumul du mois en cours',  'Total commandes / unites / CA depuis le 1er du mois'),
     array('daily_kpi_show_seuil_alert',  $showAlert,   'Alerte si marge sous seuil', 'Encart rouge si taux de marge inferieur au seuil configure'),
+    array('daily_kpi_show_alertes',      $dkOpt('daily_kpi_show_alertes', 1), 'Centre d\'alertes', 'Inclut les alertes actives (ruptures, pertes, marges faibles, chute CA)'),
 );
 foreach ($sections as $s) {
     print '<tr class="oddeven">';
@@ -287,6 +437,76 @@ foreach ($mappingRef as $pcg => $info) {
 }
 print '</table>';
 
+// ---- Maintenance : nettoyage des produits orphelins ----
+$sqlOrph = "SELECT COUNT(*) AS nb FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_produit
+            WHERE (ref LIKE 'ORPHELIN-%' OR ref LIKE 'LIBRE:%')
+              AND entity = ".((int)$conf->entity);
+$rOrph = $db->query($sqlOrph);
+$nbOrph = ($rOrph && $oO = $db->fetch_object($rOrph)) ? (int)$oO->nb : 0;
+
+$sqlBadCat = "SELECT COUNT(*) AS nb FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie
+              WHERE (label LIKE '%Ã%' OR label LIKE '%�%')
+                AND entity = ".((int)$conf->entity);
+$rBC = $db->query($sqlBadCat);
+$nbBadCat = ($rBC && $oBC = $db->fetch_object($rBC)) ? (int)$oBC->nb : 0;
+
+if ($nbOrph > 0 || $nbBadCat > 0) {
+    print '<br><div style="background:#fff3e0;border:1px solid #e67e22;padding:14px;border-radius:4px;margin-top:20px;">';
+    print '<h4 style="margin-top:0;color:#e67e22;">&#128296; Maintenance des donnees</h4>';
+
+    if ($nbOrph > 0) {
+        print '<div style="margin-bottom:14px;padding:10px;background:#fff;border-radius:4px;">';
+        print '<p style="margin:0 0 8px 0;font-size:13px;">';
+        print '<b>'.$nbOrph.' produit(s) artificiel(s)</b> (ORPHELIN-* ou LIBRE:*) presents dans le catalogue. ';
+        print 'Ce sont des agregats de lignes sans fk_product (frais de port Octopia, lignes libres) qui faussent le top des produits et les stats.';
+        print '</p>';
+        print '<form method="POST" action="admin.php" style="display:inline;">';
+        print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? dol_escape_htmltag($_SESSION['newtoken']) : newToken()).'">';
+        print '<input type="hidden" name="action" value="cleanup_orphelins">';
+        print '<button type="submit" class="button butActionDelete" onclick="return confirm(\'Supprimer '.$nbOrph.' produit(s) artificiel(s) + leurs ventes ? Vous devrez relancer une synchro ensuite.\')">Nettoyer les produits orphelins</button>';
+        print '</form>';
+        print '</div>';
+    }
+
+    if ($nbBadCat > 0) {
+        print '<div style="padding:10px;background:#fff;border-radius:4px;">';
+        print '<p style="margin:0 0 8px 0;font-size:13px;">';
+        print '<b>'.$nbBadCat.' categorie(s)</b> ont un libelle avec un double-encodage UTF-8 (ex: "TA&Atilde;&copy;lA&Atilde;&copy;phonie" au lieu de "Telephonie").';
+        print '</p>';
+        print '<form method="POST" action="admin.php" style="display:inline;">';
+        print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? dol_escape_htmltag($_SESSION['newtoken']) : newToken()).'">';
+        print '<input type="hidden" name="action" value="fix_category_encoding">';
+        print '<button type="submit" class="button" onclick="return confirm(\'Corriger l\\\'encodage de '.$nbBadCat.' categorie(s) ?\')">Corriger l\'encodage</button>';
+        print '</form>';
+        print '</div>';
+    }
+
+    print '</div>';
+}
+
+// ---- Nettoyage des frais de port comptabilises a tort ----
+$sqlCheck = "SELECT COUNT(*) AS nb FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_frais
+             WHERE label LIKE 'Port Octopia (auto%' AND entity = ".((int)$conf->entity);
+$rCheck = $db->query($sqlCheck);
+$nbPortCharges = 0;
+if ($rCheck && $oC = $db->fetch_object($rCheck)) $nbPortCharges = (int)$oC->nb;
+
+if ($nbPortCharges > 0) {
+    print '<br><div style="background:#fdebe5;border:1px solid #c0392b;padding:14px;border-radius:4px;margin-top:20px;">';
+    print '<h4 style="margin-top:0;color:#c0392b;">&#9888; Nettoyage recommande</h4>';
+    print '<p style="font-size:13px;">';
+    print '<b>'.$nbPortCharges.' entree(s) "Port Octopia (auto)"</b> sont actuellement enregistrees en CHARGES dans vos frais mensuels. ';
+    print 'C\'est une <b>erreur conceptuelle</b> : les frais de port factures aux clients sont un REVENU (CA reverse par Cdiscount), pas une charge.<br>';
+    print 'Les charges reelles de transport viennent uniquement de vos factures fournisseur Cdiscount (PCG 624/626).';
+    print '</p>';
+    print '<form method="POST" action="admin.php" style="margin-top:10px;">';
+    print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? dol_escape_htmltag($_SESSION['newtoken']) : newToken()).'">';
+    print '<input type="hidden" name="action" value="cleanup_port_charges">';
+    print '<button type="submit" class="button butActionDelete" onclick="return confirm(\'Supprimer les '.$nbPortCharges.' entree(s) Port Octopia (auto) des frais ?\')">Nettoyer maintenant</button>';
+    print '</form>';
+    print '</div>';
+}
+
 // ---- Bouton de test ----
 $emailDefaut = isset($params['daily_kpi_email']) ? $params['daily_kpi_email'] : '';
 print '<br><div style="background:#e3f1fc;border:1px solid #3498db;padding:14px;border-radius:4px;margin-top:20px;">';
@@ -297,17 +517,59 @@ print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) 
 print '<input type="hidden" name="action" value="send_test_mail">';
 print '<input type="email" name="test_email" class="flat" style="width:260px;" placeholder="Laisser vide pour utiliser l\'email configure" value="">';
 print '<button type="submit" class="button butActionNew"><i class="fa fa-paper-plane"></i> Envoyer le test</button>';
+print '</form>';
+
+// Bouton apercu navigateur (formulaire separe car cible un nouvel onglet)
+print '<a href="preview_mail.php" target="_blank" class="button" style="display:inline-flex;align-items:center;gap:6px;margin-left:8px;text-decoration:none;"><i class="fa fa-eye"></i> Apercu navigateur</a>';
+
+print '<form style="display:none">'; // dummy pour fermer ci-dessous
 if ($emailDefaut) print '<span style="font-size:12px;color:#666;">Email configure : <b>'.dol_escape_htmltag($emailDefaut).'</b></span>';
 else print '<span style="font-size:12px;color:#c0392b;">Aucun email configure dans les parametres.</span>';
 print '</form>';
 print '<p style="font-size:11px;color:#888;margin-top:10px;">Le mail de test inclura le prefixe <code>[TEST]</code> dans son sujet. La case "Activer l\'envoi quotidien" n\'a pas besoin d\'etre cochee pour le test.</p>';
 print '</div>';
 
+// ---- Option recommandee : scheduler Dolibarr ----
+print '<br><div style="background:#e8f8ee;border:1px solid #27ae60;padding:14px;border-radius:4px;margin-top:20px;">';
+print '<h4 style="margin-top:0;color:#27ae60;"><i class="fa fa-check-circle"></i> Methode recommandee : taches planifiees Dolibarr</h4>';
+print '<p style="font-size:13px;">Plus fiable que le cron systeme o2switch (pas de probleme de chemin PHP). Le module a enregistre 2 taches automatiquement :</p>';
+print '<ol style="font-size:13px;line-height:1.7;">';
+print '<li>Allez dans <b>Accueil &rarr; Configuration &rarr; Taches planifiees</b> (ou <code>'.DOL_URL_ROOT.'/cron/list.php</code>)</li>';
+print '<li>Vous y verrez <b>"Rapport KPI Octopia quotidien"</b> et <b>"Capture mensuelle des prix Octopia"</b></li>';
+print '<li>Verifiez qu\'elles sont <b>activees</b> (statut "Active"). Reglez l\'heure de declenchement souhaitee dans la colonne "Prochaine execution".</li>';
+print '<li><b>Important :</b> pour que le scheduler tourne, une tache cron systeme minimale doit appeler le lanceur Dolibarr. Si ce n\'est pas deja fait, ajoutez UNE seule ligne cron o2switch :</li>';
+print '</ol>';
+$cronLauncher = '*/15 * * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/../scripts/cron/cron_run_jobs.php '.(!empty($conf->file->cron_securekey) ? $conf->file->cron_securekey : 'VOTRE_CLE').' superadmin >> /tmp/dolibarr_cron.log 2>&1';
+print '<code style="display:block;background:#fff;padding:10px;border-radius:4px;font-size:11px;word-break:break-all;border:1px solid #ddd;">'.dol_escape_htmltag($cronLauncher).'</code>';
+print '<p style="font-size:12px;color:#666;margin-top:8px;">';
+print 'Ce lanceur unique (toutes les 15 min) execute TOUTES vos taches planifiees Dolibarr, pas seulement celles de ce module. ';
+print 'La cle securisee se trouve dans <b>Accueil &rarr; Configuration &rarr; Taches planifiees</b> (lien "Information" en haut).';
+print '</p>';
+print '<p style="font-size:12px;color:#888;margin-top:6px;font-style:italic;">';
+print 'Avec cette methode, vous configurez tout dans l\'interface Dolibarr (heure, activation) sans toucher au cron a chaque changement.';
+print '</p>';
+print '</div>';
+
 // ---- Instructions cron ----
 print '<br><div style="background:#fffae6;border:1px solid #f1c40f;padding:14px;border-radius:4px;margin-top:20px;">';
-print '<h4 style="margin-top:0;">⏰ Configuration du cron quotidien</h4>';
-print '<p style="font-size:13px;">Ajoutez cette ligne dans <b>cPanel o2switch &rarr; Taches Cron</b> pour recevoir le rapport tous les matins a 8h :</p>';
-$cronCmd = '0 8 * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1';
+print '<h4 style="margin-top:0;">⏰ Alternative : cron systeme direct (si vous n\'utilisez pas le scheduler Dolibarr)</h4>';
+print '<p style="font-size:13px;"><b>Etapes</b> :</p>';
+print '<ol style="font-size:13px;line-height:1.7;">';
+print '<li>Connectez-vous a votre <b>cPanel o2switch</b> : <a href="https://wings.o2switch.net:2083" target="_blank">wings.o2switch.net:2083</a></li>';
+print '<li>Cherchez <b>"Taches Cron"</b> dans la barre de recherche (ou section "Avance")</li>';
+print '<li>Dans <b>"Ajouter une nouvelle tache Cron"</b>, saisissez :<br>';
+print '<table style="margin-left:20px;margin-top:8px;font-size:12px;">';
+print '<tr><td style="padding:2px 12px 2px 0;color:#888">Minute :</td><td><code style="background:#fff;padding:2px 6px;border:1px solid #ddd;border-radius:3px;">0</code></td></tr>';
+print '<tr><td style="padding:2px 12px 2px 0;color:#888">Heure :</td><td><code style="background:#fff;padding:2px 6px;border:1px solid #ddd;border-radius:3px;">'.$hourCron.'</code></td></tr>';
+print '<tr><td style="padding:2px 12px 2px 0;color:#888">Jour / Mois / Jour semaine :</td><td><code style="background:#fff;padding:2px 6px;border:1px solid #ddd;border-radius:3px;">*</code> &nbsp;<code style="background:#fff;padding:2px 6px;border:1px solid #ddd;border-radius:3px;">*</code> &nbsp;<code style="background:#fff;padding:2px 6px;border:1px solid #ddd;border-radius:3px;">*</code></td></tr>';
+print '<tr><td style="padding:2px 12px 2px 0;color:#888;vertical-align:top;">Commande :</td><td><code style="background:#fff;padding:6px 10px;border:1px solid #ddd;border-radius:3px;font-size:11px;display:inline-block;max-width:600px;word-break:break-all;" id="cron_cmd_only">/usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1</code></td></tr>';
+print '</table></li>';
+print '<li>Cliquez sur <b>"Ajouter une nouvelle tache Cron"</b></li>';
+print '</ol>';
+
+print '<p style="font-size:13px;margin-top:14px;"><b>Ou ligne complete</b> (pour copier-coller dans une console SSH ou un fichier crontab) :</p>';
+$hourCron = isset($params['daily_kpi_send_hour']) && $params['daily_kpi_send_hour'] !== '' ? (int)$params['daily_kpi_send_hour'] : 8;
+$cronCmd  = '0 '.$hourCron.' * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1';
 print '<code style="display:block;background:#fff;padding:10px;border-radius:4px;font-size:12px;word-break:break-all;border:1px solid #ddd;">'.dol_escape_htmltag($cronCmd).'</code>';
 print '<p style="font-size:12px;color:#666;margin-top:10px;">';
 print '<b>Pour tester manuellement :</b><br>';
@@ -317,6 +579,28 @@ print '<p style="font-size:12px;color:#666;margin-top:10px;">';
 print '<b>Pour verifier les logs d\'envoi :</b><br>';
 print '<code style="background:#fff;padding:4px 8px;border-radius:3px;border:1px solid #ddd;">tail -50 /tmp/rentabiliteoctopia_daily.log</code>';
 print '</p>';
+print '</div>';
+
+// ---- Cache des performances ----
+$cacheInfo = new CacheMois($db, $conf->entity);
+$sqlCacheCount = "SELECT COUNT(*) AS nb, MAX(date_calcul) AS derniere FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_cache_mois WHERE entity = ".((int)$conf->entity);
+$rCC = $db->query($sqlCacheCount);
+$nbCache = 0; $derniereCalc = null;
+if ($rCC && $oCC = $db->fetch_object($rCC)) { $nbCache = (int)$oCC->nb; $derniereCalc = $oCC->derniere; }
+
+print '<br><div style="background:#f0f4ff;border:1px solid #667eea;padding:14px;border-radius:4px;margin-top:20px;">';
+print '<h4 style="margin-top:0;"><i class="fa fa-bolt"></i> Cache des performances</h4>';
+print '<p style="font-size:13px;">Les mois passes sont mis en cache pour accelerer l\'affichage du tableau de bord et de la page Sante. ';
+print 'Le cache se met a jour automatiquement a chaque synchronisation.</p>';
+print '<p style="font-size:13px;"><b>'.$nbCache.' mois</b> actuellement en cache';
+if ($derniereCalc) print ' &middot; dernier calcul : '.dol_print_date(dol_stringtotime($derniereCalc), 'dayhour');
+print '</p>';
+print '<form method="POST" action="admin.php" style="display:inline;">';
+print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? dol_escape_htmltag($_SESSION['newtoken']) : newToken()).'">';
+print '<input type="hidden" name="action" value="purge_cache">';
+print '<button type="submit" class="button">Vider le cache (forcer recalcul)</button>';
+print '</form>';
+print '<p style="font-size:11px;color:#888;margin-top:8px;">A utiliser uniquement si les chiffres affiches semblent obsoletes apres un changement manuel en base.</p>';
 print '</div>';
 
 llxFooter();

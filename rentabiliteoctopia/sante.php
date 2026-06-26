@@ -17,6 +17,7 @@ if (!$res && file_exists('../../../main.inc.php')) $res = @include '../../../mai
 if (!$res) die('Include of main fails');
 
 require_once __DIR__.'/lib/rentabiliteoctopia.lib.php';
+require_once __DIR__.'/lib/CacheMois.class.php';
 
 if (!$user->rights->rentabiliteoctopia->read) accessforbidden();
 $langs->load('rentabiliteoctopia@rentabiliteoctopia');
@@ -87,40 +88,18 @@ function pctEvol($cur, $prev) {
     return ($pct >= 0 ? '+' : '').number_format($pct, 1, ',', '').' %';
 }
 
-// 2. Evolution mensuelle CA / marge brute / marge nette
+// 2. Evolution mensuelle CA / marge brute / marge nette (via cache des mois figes)
+$cacheMois = new CacheMois($db, $conf->entity);
+$evolBrute = $cacheMois->getEvolution($annee, $params);
 $evolutions = array();
 for ($m = 1; $m <= 12; $m++) {
-    $sql = "SELECT
-                COALESCE(SUM(v.qty_vendue * v.prix_ht), 0)         AS ca,
-                COALESCE(SUM(v.qty_vendue * v.cout_achat), 0)      AS cout,
-                COALESCE(SUM(CASE
-                    WHEN v.commission_reel IS NOT NULL THEN v.commission_reel
-                    WHEN v.commission_pct IS NOT NULL THEN (v.qty_vendue * v.prix_ht * v.commission_pct / 100)
-                    WHEN c.commission_pct IS NOT NULL THEN (v.qty_vendue * v.prix_ht * c.commission_pct / 100)
-                    ELSE 0 END), 0)                                AS comm,
-                COALESCE(SUM(v.qty_vendue), 0)                     AS qty
-            FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_vente v
-            LEFT JOIN ".MAIN_DB_PREFIX."rentabiliteoctopia_produit p ON p.rowid = v.fk_produit
-            LEFT JOIN ".MAIN_DB_PREFIX."rentabiliteoctopia_categorie c ON c.rowid = p.fk_categorie
-            WHERE v.annee = ".$annee." AND v.mois = ".$m." AND v.entity = ".((int)$conf->entity);
-    $r = $db->query($sql);
-    $obj = $r ? $db->fetch_object($r) : null;
-    $ca = $obj ? (float)$obj->ca : 0;
-    $cout = $obj ? (float)$obj->cout : 0;
-    $comm = $obj ? (float)$obj->comm : 0;
-    $mb = $ca - $cout - $comm;
-
-    $sqlF = "SELECT COALESCE(SUM(montant), 0) AS f FROM ".MAIN_DB_PREFIX."rentabiliteoctopia_frais
-             WHERE annee = ".$annee." AND mois = ".$m." AND entity = ".((int)$conf->entity);
-    $rf = $db->query($sqlF);
-    $f = ($rf && $of = $db->fetch_object($rf)) ? (float)$of->f : 0;
-
+    $e = $evolBrute[$m];
     $evolutions[$m] = array(
-        'ca'    => $ca,
-        'mb'    => $mb,
-        'mn'    => $mb - $f,
-        'frais' => $f,
-        'qty'   => $obj ? (int)$obj->qty : 0,
+        'ca'    => $e['ca'],
+        'mb'    => $e['marge_produits'],
+        'mn'    => $e['marge_nette'],
+        'frais' => $e['frais_fixes'],
+        'qty'   => $e['qty'],
     );
 }
 

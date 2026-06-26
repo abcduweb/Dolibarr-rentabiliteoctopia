@@ -5,6 +5,7 @@
  */
 
 require_once DOL_DOCUMENT_ROOT.'/core/class/CMailFile.class.php';
+require_once __DIR__.'/AlertesEngine.class.php';
 
 class DailyKpiMailer
 {
@@ -111,28 +112,49 @@ class DailyKpiMailer
         $period     = !empty($this->params['daily_kpi_period']) ? $this->params['daily_kpi_period'] : 'j1';
         $seuilMarge = isset($this->params['seuil_marge_pct']) ? (float)$this->params['seuil_marge_pct'] : 15;
 
+        // Determiner les bornes de la periode courante ET des periodes de comparaison
+        // Les comparaisons doivent etre coherentes : meme duree, decalee dans le temps.
         switch ($period) {
             case 'j7':
-                $dateDebut = date('Y-m-d', strtotime('-7 days'));
-                $dateFin   = date('Y-m-d', strtotime('-1 day'));
+                $dateDebut    = date('Y-m-d', strtotime('-7 days'));
+                $dateFin      = date('Y-m-d', strtotime('-1 day'));
                 $labelPeriode = '7 derniers jours';
+                // Comparaison vs 7 jours precedents (J-14..J-8)
+                $dateCmp1Deb  = date('Y-m-d', strtotime('-14 days'));
+                $dateCmp1Fin  = date('Y-m-d', strtotime('-8 days'));
+                $labelCmp1    = '7 jours precedents';
+                // Comparaison vs 7 jours il y a 4 semaines (J-35..J-29) - eq semaine 4 semaines avant
+                $dateCmp2Deb  = date('Y-m-d', strtotime('-35 days'));
+                $dateCmp2Fin  = date('Y-m-d', strtotime('-29 days'));
+                $labelCmp2    = 'meme periode 4 semaines avant';
                 break;
             case 'month_to_date':
-                $dateDebut = date('Y-m-01');
-                $dateFin   = date('Y-m-d', strtotime('-1 day'));
+                $dateDebut    = date('Y-m-01');
+                $dateFin      = date('Y-m-d', strtotime('-1 day'));
                 $labelPeriode = 'mois en cours';
+                // Mois precedent du 1er au meme jour
+                $jourCourant  = (int)date('d', strtotime('-1 day'));
+                $dateCmp1Deb  = date('Y-m-01', strtotime('first day of last month'));
+                $dateCmp1Fin  = date('Y-m-'.str_pad($jourCourant, 2, '0', STR_PAD_LEFT), strtotime('first day of last month'));
+                $labelCmp1    = 'mois precedent (au '.dol_print_date(dol_stringtotime($dateCmp1Fin), 'day').')';
+                // Annee precedente, meme mois jusqu'au meme jour
+                $dateCmp2Deb  = date('Y-m-01', strtotime('-1 year'));
+                $dateCmp2Fin  = date('Y-m-'.str_pad($jourCourant, 2, '0', STR_PAD_LEFT), strtotime('-1 year'));
+                $labelCmp2    = 'meme periode an dernier';
                 break;
-            default:
-                $dateDebut = date('Y-m-d', strtotime('-1 day'));
-                $dateFin   = $dateDebut;
+            default: // j1
+                $dateDebut    = date('Y-m-d', strtotime('-1 day'));
+                $dateFin      = $dateDebut;
                 $labelPeriode = 'hier';
+                $dateCmp1Deb  = $dateCmp1Fin = date('Y-m-d', strtotime('-2 days'));
+                $labelCmp1    = 'veille (J-2)';
+                $dateCmp2Deb  = $dateCmp2Fin = date('Y-m-d', strtotime('-8 days'));
+                $labelCmp2    = 'meme jour semaine precedente';
         }
-        $dateAvantHier = date('Y-m-d', strtotime('-2 days'));
-        $dateSemPrec   = date('Y-m-d', strtotime('-8 days'));
 
-        $kpi      = $this->getKpi($dateDebut, $dateFin);
-        $kpiV     = $this->getKpi($dateAvantHier);
-        $kpiSP    = $this->getKpi($dateSemPrec);
+        $kpi   = $this->getKpi($dateDebut,    $dateFin);
+        $kpiV  = $this->getKpi($dateCmp1Deb,  $dateCmp1Fin);
+        $kpiSP = $this->getKpi($dateCmp2Deb,  $dateCmp2Fin);
         $top      = $this->getTopProduits($dateDebut, $dateFin, $topN);
 
         $margeBrut = $kpi['ca_produits'] - $kpi['cout_achat'];
@@ -199,21 +221,27 @@ class DailyKpiMailer
                 $html .= '<td style="background:#e8f4fd;padding:14px;border-radius:6px;width:50%;vertical-align:top;">';
                 $html .= '<div style="font-size:11px;color:#3498db;text-transform:uppercase;font-weight:bold;">CA HT</div>';
                 $html .= '<div style="font-size:22px;font-weight:bold;color:#3498db;margin:4px 0;">'.$fmtEur($kpi['ca_ht']).'</div>';
-                if ($optCmpJ2) $html .= '<div style="font-size:11px;color:#666">'.$fmtPct($kpi['ca_ht'], $kpiV['ca_ht']).' vs J-2</div>';
+                if ($optCmpJ2) $html .= '<div style="font-size:11px;color:#666">'.$fmtPct($kpi['ca_ht'], $kpiV['ca_ht']).' vs '.$labelCmp1.'</div>';
                 $html .= '</td>';
                 $html .= '<td style="background:#e8f8ee;padding:14px;border-radius:6px;width:50%;vertical-align:top;">';
-                $html .= '<div style="font-size:11px;color:#27ae60;text-transform:uppercase;font-weight:bold;">Marge brute</div>';
-                $html .= '<div style="font-size:22px;font-weight:bold;color:'.($margeBrut>=0?'#27ae60':'#c0392b').';margin:4px 0;">'.$fmtEur($margeBrut).'</div>';
-                $html .= '<div style="font-size:11px;color:#666">'.number_format($tauxBrut,1,',','').' % du CA produits</div>';
+                if ($kpi['cout_achat'] == 0 && $kpi['ca_produits'] > 0) {
+                    $html .= '<div style="font-size:11px;color:#888;text-transform:uppercase;font-weight:bold;">Marge brute</div>';
+                    $html .= '<div style="font-size:18px;font-weight:bold;color:#888;margin:4px 0;">non disponible</div>';
+                    $html .= '<div style="font-size:11px;color:#e67e22">&#9888; Cout d\'achat manquant</div>';
+                } else {
+                    $html .= '<div style="font-size:11px;color:#27ae60;text-transform:uppercase;font-weight:bold;">Marge brute</div>';
+                    $html .= '<div style="font-size:22px;font-weight:bold;color:'.($margeBrut>=0?'#27ae60':'#c0392b').';margin:4px 0;">'.$fmtEur($margeBrut).'</div>';
+                    $html .= '<div style="font-size:11px;color:#666">'.number_format($tauxBrut,1,',','').' % du CA produits</div>';
+                }
                 $html .= '</td>';
                 $html .= '</tr><tr>';
                 $html .= '<td style="background:#f4ecf7;padding:14px;border-radius:6px;vertical-align:top;">';
                 $html .= '<div style="font-size:11px;color:#9b59b6;text-transform:uppercase;font-weight:bold;">Commandes</div>';
                 $html .= '<div style="font-size:22px;font-weight:bold;color:#9b59b6;margin:4px 0;">'.$kpi['nb_commandes'].'</div>';
                 $cmp = '';
-                if ($optCmpJ2) $cmp .= $fmtPct($kpi['nb_commandes'], $kpiV['nb_commandes']).' vs veille';
+                if ($optCmpJ2) $cmp .= $fmtPct($kpi['nb_commandes'], $kpiV['nb_commandes']).' vs '.$labelCmp1;
                 if ($optCmpJ2 && $optCmpWeek) $cmp .= ' &nbsp; | &nbsp; ';
-                if ($optCmpWeek) $cmp .= $fmtPct($kpi['nb_commandes'], $kpiSP['nb_commandes']).' vs '.$jourFr.' dernier';
+                if ($optCmpWeek) $cmp .= $fmtPct($kpi['nb_commandes'], $kpiSP['nb_commandes']).' vs '.$labelCmp2;
                 if ($cmp) $html .= '<div style="font-size:11px;color:#666">'.$cmp.'</div>';
                 $html .= '</td>';
                 $html .= '<td style="background:#fdf5e6;padding:14px;border-radius:6px;vertical-align:top;">';
@@ -230,7 +258,9 @@ class DailyKpiMailer
                 $html .= '&bull; Produits : <b>'.$fmtEur($kpi['ca_produits']).'</b><br>';
                 $html .= '&bull; Frais de port : <b>'.$fmtEur($kpi['ca_port']).'</b><br>';
                 $html .= '&bull; Cout d\'achat estime : <b>'.$fmtEur($kpi['cout_achat']).'</b>';
-                if ($optAlert && $tauxBrut < $seuilMarge && $margeBrut > 0) {
+                if ($kpi['cout_achat'] == 0 && $kpi['ca_produits'] > 0) {
+                    $html .= '<br><br><span style="color:#e67e22;font-weight:bold;">&#9888; Cout d\'achat non renseigne sur vos fiches produit Dolibarr (champ <code>cost_price</code>). La marge brute affichee est donc surestimee. Saisissez les couts d\'achat dans Produits&nbsp;|&nbsp;Services pour avoir une marge realiste.</span>';
+                } elseif ($optAlert && $tauxBrut < $seuilMarge && $margeBrut > 0) {
                     $html .= '<br><br><span style="color:#c0392b;font-weight:bold;">&#9888; Marge brute ('.number_format($tauxBrut,1,',','').'%) sous le seuil configure ('.$seuilMarge.'%).</span>';
                 }
                 $html .= '</div>';
@@ -257,11 +287,19 @@ class DailyKpiMailer
                 $moisNoms = array('','Janvier','Fevrier','Mars','Avril','Mai','Juin','Juillet','Aout','Septembre','Octobre','Novembre','Decembre');
                 $mc = (int)date('m');
                 $html .= '<div style="margin-top:24px;padding:14px;background:#ecf0f1;border-radius:6px;">';
-                $html .= '<div style="font-size:11px;color:#7f8c8d;text-transform:uppercase;letter-spacing:0.5px;">Cumul '.$moisNoms[$mc].' '.date('Y').' (au '.$dateHier.')</div>';
+                $html .= '<div style="font-size:11px;color:#7f8c8d;text-transform:uppercase;letter-spacing:0.5px;">Cumul '.$moisNoms[$mc].' '.date('Y').' (au '.dol_print_date(dol_stringtotime($dateHier), 'day').')</div>';
                 $html .= '<div style="font-size:14px;color:#2c3e50;margin-top:6px;">';
                 $html .= '<b>'.$cumNb.'</b> commandes &nbsp;&middot;&nbsp; <b>'.$cumQty.'</b> unites &nbsp;&middot;&nbsp; <b>'.$fmtEur($cumCa).'</b> de CA';
                 $html .= '</div></div>';
             }
+        }
+
+        // Section alertes (si activee)
+        $optAlertes = $this->cfg('daily_kpi_show_alertes', 1);
+        if ($optAlertes) {
+            $engine = new AlertesEngine($this->db, $this->entity, $this->params);
+            $alertesHtml = $engine->getAlertesHtml();
+            if ($alertesHtml) $html .= $alertesHtml;
         }
 
         $html .= '<div style="margin-top:24px;text-align:center;">';
@@ -312,6 +350,11 @@ class DailyKpiMailer
 
     /**
      * Envoie le mail (utilise dans cron et test)
+     *
+     * Utilise PHP mail() directement avec un MIME multipart/alternative propre.
+     * On contourne CMailFile qui enveloppe tout en multipart/mixed meme sans piece jointe,
+     * ce qui pose probleme avec certains clients mail (eM Client, Outlook anciens).
+     *
      * @param string $emailTo Adresses destinataires (peut etre passe en override pour test)
      * @param bool   $isTest  Si true, prefixe le sujet avec [TEST]
      * @return bool
@@ -328,22 +371,69 @@ class DailyKpiMailer
 
         global $conf;
         $emailFrom = !empty($conf->global->MAIN_MAIL_EMAIL_FROM) ? $conf->global->MAIN_MAIL_EMAIL_FROM : 'noreply@localhost';
+        $fromName  = !empty($conf->global->MAIN_INFO_SOCIETE_NOM) ? $conf->global->MAIN_INFO_SOCIETE_NOM : 'rentabiliteoctopia';
 
         $html    = $this->buildHtml();
         $subject = $this->buildSubject();
         if ($isTest) $subject = '[TEST] '.$subject;
 
-        $mail = new CMailFile($subject, $emailTo, $emailFrom, $html, array(), array(), array(), '', '', 0, 1);
-        if ($mail->error) {
-            $this->log('Erreur construction mail : '.$mail->error);
-            return false;
+        // Generer une version texte basique a partir du HTML (fallback)
+        $textPart = strip_tags(preg_replace('/<(br|tr|\/td|\/h\d|\/div|\/p)[^>]*>/i', "\n", $html));
+        $textPart = html_entity_decode($textPart, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $textPart = preg_replace('/\n{3,}/', "\n\n", trim($textPart));
+
+        // Sujet encode en UTF-8 base64 (RFC 2047)
+        $subjectEnc = '=?UTF-8?B?'.base64_encode($subject).'?=';
+
+        // Boundary unique
+        $boundary = '==MULTIPART_BOUNDARY_'.md5(uniqid('', true));
+
+        // Headers
+        $headers  = 'From: =?UTF-8?B?'.base64_encode($fromName).'?= <'.$emailFrom.'>'."\r\n";
+        $headers .= 'Reply-To: '.$emailFrom."\r\n";
+        $headers .= 'Return-Path: '.$emailFrom."\r\n";
+        $headers .= 'X-Mailer: rentabiliteoctopia (Dolibarr custom)'."\r\n";
+        $headers .= 'MIME-Version: 1.0'."\r\n";
+        $headers .= 'Content-Type: multipart/alternative; boundary="'.$boundary.'"'."\r\n";
+
+        // Corps multipart/alternative (texte d'abord, HTML ensuite -> les clients prennent le HTML)
+        // IMPORTANT: encodage base64 obligatoire car le HTML inline contient des lignes > 998 octets
+        // (limite SMTP RFC 5322), ce qui faisait rejeter par o2switch ("message has lines too long").
+        // chunk_split() coupe automatiquement a 76 caracteres avec \r\n.
+        $textPart64 = chunk_split(base64_encode($textPart), 76, "\r\n");
+        $htmlPart64 = chunk_split(base64_encode($html), 76, "\r\n");
+
+        $body  = "This is a multi-part message in MIME format.\r\n\r\n";
+
+        $body .= '--'.$boundary."\r\n";
+        $body .= 'Content-Type: text/plain; charset="UTF-8"'."\r\n";
+        $body .= 'Content-Transfer-Encoding: base64'."\r\n\r\n";
+        $body .= $textPart64."\r\n";
+
+        $body .= '--'.$boundary."\r\n";
+        $body .= 'Content-Type: text/html; charset="UTF-8"'."\r\n";
+        $body .= 'Content-Transfer-Encoding: base64'."\r\n\r\n";
+        $body .= $htmlPart64."\r\n";
+
+        $body .= '--'.$boundary.'--'."\r\n";
+
+        // Envoyer (gerer destinataires multiples separes par virgules)
+        $allOk = true;
+        $recipients = array_map('trim', explode(',', $emailTo));
+        foreach ($recipients as $rcpt) {
+            if (!filter_var($rcpt, FILTER_VALIDATE_EMAIL)) {
+                $this->log('Destinataire invalide ignore : '.$rcpt);
+                continue;
+            }
+            $ok = @mail($rcpt, $subjectEnc, $body, $headers, '-f'.$emailFrom);
+            if ($ok) {
+                $this->log('Mail envoye a '.$rcpt.' (sujet: '.$subject.')');
+            } else {
+                $err = error_get_last();
+                $this->log('ECHEC envoi a '.$rcpt.' : '.($err ? $err['message'] : 'raison inconnue'));
+                $allOk = false;
+            }
         }
-        $ok = $mail->sendfile();
-        if (!$ok) {
-            $this->log('Erreur envoi : '.$mail->error);
-            return false;
-        }
-        $this->log('Mail envoye a '.$emailTo.' (sujet: '.$subject.')');
-        return true;
+        return $allOk;
     }
 }
