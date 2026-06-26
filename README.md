@@ -1,269 +1,172 @@
-# 📊 RentabiliteOctopia — Module Dolibarr
+# Rentabilité Octopia — module Dolibarr
 
-**Tableau de rentabilité mensuelle des ventes Octopia / Cdiscount**  
-Développé par [ABCduWeb](https://www.abcduweb.fr) — version **1.2.1**
+**Tableau de pilotage de la rentabilité des ventes Octopia / Cdiscount pour Dolibarr.**
 
----
-
-## 🧭 Présentation
-
-`rentabiliteoctopia` est un module Dolibarr qui calcule automatiquement la rentabilité de votre boutique Cdiscount/Octopia, mois par mois et produit par produit.
-
-Il fonctionne **en parallèle** avec le module **octopiaSync** : il lit les tables d'octopiaSync et les combine avec les frais et taux de commission configurés pour produire un tableau de bord de rentabilité complet.
+- **Version :** 1.2.1
+- **Éditeur :** ABCduWeb — https://www.abcduweb.fr
+- **Compatibilité :** Dolibarr 22.x, PHP 8.x, MariaDB/MySQL
 
 ---
 
-## ✅ Prérequis
+## Présentation
 
-| Élément | Version minimale |
-|---|---|
-| Dolibarr | 17.0 |
-| PHP | 7.4 |
-| Module **octopiaSync** | Installé et actif |
-| MariaDB / MySQL | 5.7 / 10.2 |
+Ce module calcule et suit la rentabilité réelle de vos ventes sur la marketplace Cdiscount/Octopia : chiffre d'affaires, commissions, marges, trésorerie à venir, optimisation des prix, réassort et alertes. Il s'appuie sur les commandes importées par le module **octopiaSync** et sur les factures fournisseur de Dolibarr pour produire une vision complète, du suivi quotidien à la décision tarifaire.
 
 ---
 
-## 📦 Installation
+## Prérequis
 
-1. Décompresser le zip dans `htdocs/custom/` de votre Dolibarr :
-   ```
-   htdocs/custom/rentabiliteoctopia/
-   ```
-2. Aller dans **Accueil → Configuration → Modules/Applications**
-3. Chercher **"Rentabilité Octopia"** et activer le module
-4. Les tables SQL sont créées automatiquement à l'activation
-5. Aller dans **Rentabilité Octopia → Paramètres** pour configurer
+- **Dolibarr 22.x** (testé sur 22.0.3).
+- **PHP 8.x**, base **MariaDB/MySQL**.
+- Le module **octopiaSync** installé et synchronisé (il alimente la table `llx_octopia_orders`, source des ventes).
+- Module **Comptabilité** recommandé (factures fournisseur) pour le coût d'achat automatique et la vue fournisseurs.
+- Module **Stock** facultatif (pour le réassort basé sur le stock réel).
 
 ---
 
-## 🗂️ Structure des fichiers
+## Installation
 
-```
-rentabiliteoctopia/
-├── admin.php                          # Redirect → admin/admin.php (compat)
-├── admin/
-│   └── admin.php                      # Page paramètres principale
-├── index.php                          # Tableau de bord mensuel
-├── produits.php                       # Gestion produits + saisie ventes
-├── frais.php                          # Saisie / import frais mensuels
-├── categories.php                     # Gestion catégories + taux commission
-├── sync.php                           # Synchronisation manuelle depuis octopiaSync
-├── core/
-│   └── modules/
-│       └── modRentabiliteOctopia.class.php
-├── lib/
-│   ├── rentabiliteoctopia.lib.php        # Fonctions utilitaires + calculs
-│   ├── OctopiaRentabiliteSync.class.php  # Synchro octopiaSync → rentabilité
-│   └── OctopiaFactureImport.class.php    # Import frais depuis factures fournisseur
-├── cron/
-│   └── sync_octopia.php               # Script cron automatique
-├── sql/
-│   ├── llx_rentabiliteoctopia_categorie.sql
-│   ├── llx_rentabiliteoctopia_produit.sql
-│   ├── llx_rentabiliteoctopia_vente.sql
-│   ├── llx_rentabiliteoctopia_frais.sql
-│   ├── llx_rentabiliteoctopia_params.sql
-│   ├── llx_rentabiliteoctopia_produit_fk_categorie.sql
-│   ├── llx_rentabiliteoctopia_vente_fk_produit.sql
-│   ├── data.sql                       # Données par défaut (catégories + params)
-│   └── rentabiliteoctopia.sql         # Schéma complet (référence manuelle)
-└── langs/
-    └── fr_FR/
-        └── rentabiliteoctopia.lang
-```
+1. Copier le dossier `rentabiliteoctopia/` dans `htdocs/custom/` de votre Dolibarr.
+2. Aller dans **Accueil → Configuration → Modules** et activer **Rentabilité Octopia**.
+3. Ouvrir **Rentabilité Octopia → Paramètres** pour configurer les taux de commission, le coût d'achat, le rapport mail, etc.
+
+> **Hébergement mutualisé (o2switch / LiteSpeed) :** après chaque mise à jour de fichiers, purger l'OPcache puis vider le cache navigateur (voir « Déploiement » plus bas).
 
 ---
 
-## 🗄️ Modèle de données
+## Fonctionnalités
 
-```
-llx_rentabiliteoctopia_categorie
-  rowid | code (INFORMATIQUE…) | label | commission_pct | entity
+### Pilotage
+- **Accueil** — vue d'ensemble actionnable : CA/marge/commandes du mois, cartes Alertes / Ruptures / Cdiscount vous doit / Manque à gagner, accès rapide à toutes les analyses.
+- **Tableau de bord** — KPI mensuels détaillés, liste des produits, graphe d'évolution + boutons d'export (CSV / PDF).
+- **Santé entreprise** — vue annuelle : KPI N vs N-1, point mort, projection, graphe 12 mois, performance par catégorie, top produits, produits sous-marge et dormants.
+- **Saisonnalité** — analyse sur 24 mois : courbe CA + quantités, comparaison N/N-1, détection des produits saisonniers (pics concentrés sur un mois).
+- **Centre d'alertes** — détection temps réel : produits en perte, marge faible, ruptures/ruptures imminentes, chute de CA.
 
-llx_rentabiliteoctopia_produit
-  rowid | ref | designation | fk_categorie → categorie | entity
+### Prix
+- **Simulateur de prix** — calcule un prix de vente pour une marge cible (ou la marge pour un prix), avec toutes les composantes (commission, port, packaging, retours, TVA). Formule unique partagée serveur/client.
+- **Optimisation prix** — confronte le prix de vente réel au prix idéal, chiffre le manque à gagner annuel et donne un verdict par produit (augmenter / marge confortable / optimal).
+- **Historique prix** — snapshots mensuels des prix, détection des changements et mesure de leur impact réel sur le volume et la marge (hausse/baisse gagnante ou perdante).
 
-llx_rentabiliteoctopia_vente
-  rowid | fk_produit → produit | annee | mois
-        | qty_vendue | prix_ht (moy unitaire) | cout_achat
-        | commission_pct (override) | commission_reel (€ réel)
-        | UNIQUE (fk_produit, annee, mois, entity)
+### Trésorerie & stock
+- **Trésorerie Octopia** — prévision des reversements Cdiscount avec commission **réelle par produit**, déduction des **remboursements** et TVA par ligne. Pointage manuel vs prévu.
+- **Réassort & stock** — vitesse de vente × stock Dolibarr → jours de stock restant, date de rupture estimée, quantité à commander, coût du réassort.
 
-llx_rentabiliteoctopia_frais
-  rowid | annee | mois | type_frais | label | montant
-        | UNIQUE (annee, mois, type_frais, entity)
+### Données & paramétrage
+- **Produits & ventes**, **Frais mensuels**, **Catégories & commissions** — saisie et consultation.
+- **Synchronisation Octopia** — rapatrie les ventes depuis octopiaSync, capture les prix et invalide le cache automatiquement.
+- **Audit produits** — réconcilie les produits Octopia/Dolibarr, crée les produits manquants, mappe les références.
+- **Affectation rapide** — assignation en masse des catégories (taux de commission).
+- **Coût achat auto** — récupère le prix d'achat HT depuis les factures fournisseur (dernière facture ou moyenne pondérée 12 mois) et met à jour `cost_price`.
+- **Vue fournisseurs** — rentabilité par fournisseur : achats, CA généré, marge, ROI.
+- **Diagnostic** — vérifie l'intégrité du module (tables, version, mail, cohérence des données) avec liens de correction.
+- **Paramètres** — configuration complète (PCG, rapport mail, fréquence, cache, nettoyages, cron).
 
-llx_rentabiliteoctopia_params
-  rowid | param_key | param_value | entity
-        | UNIQUE (param_key, entity)
-```
-
----
-
-## ⚙️ Comment ça fonctionne
-
-### 1. Synchronisation des ventes (depuis octopiaSync)
-
-Le module est compatible avec la version d'octopiaSync qui utilise les tables :
-
-```
-llx_octopia_orders     : commandes (octopia_order_status, dolibarr_order_id, is_refunded)
-```
-
-Cette version ne stocke **pas** ses propres lignes de commande : elle référence les commandes Dolibarr natives via `dolibarr_order_id`. Les données produits viennent donc des tables standard Dolibarr :
-
-```
-llx_octopia_orders  →  dolibarr_order_id
-                              ↓
-                       llx_commande          (date, statut commande)
-                              ↓
-                       llx_commandedet       (fk_product, qty, subprice)
-                              ↓
-                       llx_product           (ref, label, cost_price)
-```
-
-**Filtres appliqués lors de la synchronisation :**
-- `o.is_refunded = 0` — exclut les commandes remboursées
-- `o.octopia_order_status NOT IN ('CANCELLED', 'REFUNDED', 'REFUSED', 'CANCELED')`
-- `c.fk_statut >= 1` — commandes Dolibarr validées uniquement
-- `o.dolibarr_order_id IS NOT NULL` — ignore les lignes orphelines
-
-La classe `OctopiaRentabiliteSync` :
-- Agrège CA HT + quantités par référence produit sur le mois demandé
-- Crée automatiquement les produits manquants dans `llx_rentabiliteoctopia_produit`
-- Fait un `INSERT … ON DUPLICATE KEY UPDATE` dans `llx_rentabiliteoctopia_vente`
-- Préserve le `cout_achat` saisi manuellement si Dolibarr n'en a pas
-
-### 2. Calcul de rentabilité
-
-**Pour chaque produit :**
-```
-CA             = qty_vendue × prix_ht
-Commission     = commission_reel  [si saisi manuellement]
-               OU qty × prix_ht × commission_pct  [override produit]
-               OU qty × prix_ht × cat_commission_pct  [taux catégorie]
-Retours        = qty × taux_retour_pct% × cout_retour
-Coût achat     = qty × cout_achat
-Marge produit  = CA − Coût achat − Commission − Retours
-Taux marge     = Marge produit / CA × 100
-```
-
-**Pour le mois :**
-```
-Frais fixes    = Σ frais mensuels (abonnement + fulfilment + transport…)
-Marge nette    = Σ Marges produits − Frais fixes
-```
-
-### 3. Import des frais depuis les factures fournisseur
-
-La classe `OctopiaFactureImport` :
-- Lit `llx_facture_fourn_det` filtrée sur le fournisseur Cdiscount/Octopia
-- Mappe les comptes PCG vers les types de frais via des préfixes configurables
-- Écrit dans `llx_rentabiliteoctopia_frais`
-
-**Mapping PCG par défaut :**
-
-| Préfixe PCG | Type de frais |
-|---|---|
-| 613x / 614x | `abonnement` |
-| 611x / 6119x | `fulfilment` |
-| 6241x / 624x / 625x | `affranchissement` |
-| 6044x / 604x | `packaging` |
-| 623x / 622x | `publicite` |
-| Autres | `autre` |
+### Exports
+- Export **CSV** (BOM UTF-8, séparateur `;` pour Excel FR) et **PDF** (TCPDF intégré à Dolibarr, aucune dépendance) sur : produits, optimisation, saisonnalité, historique prix.
 
 ---
 
-## 🔧 Configuration (Paramètres)
+## Tables créées
 
-Aller dans **Rentabilité Octopia → Paramètres** :
+| Table | Rôle |
+|-------|------|
+| `llx_rentabiliteoctopia_categorie` | Catégories + taux de commission |
+| `llx_rentabiliteoctopia_produit` | Produits suivis |
+| `llx_rentabiliteoctopia_vente` | Ventes mensuelles agrégées par produit |
+| `llx_rentabiliteoctopia_frais` | Frais fixes mensuels |
+| `llx_rentabiliteoctopia_params` | Paramètres du module |
+| `llx_rentabiliteoctopia_cache_mois` | Cache des agrégats mensuels figés |
+| `llx_rentabiliteoctopia_prix_histo` | Historique des prix (snapshots mensuels) |
 
-| Paramètre | Défaut | Description |
-|---|---|---|
-| `seuil_marge_pct` | 15% | Alerte si taux de marge < seuil |
-| `taux_retour_pct` | 3% | Taux de retours estimé |
-| `cout_retour` | 2.50 € | Coût unitaire d'un retour |
-| `nom_fournisseur` | Cdiscount | Nom dans la fiche fournisseur Dolibarr |
-| `pcg_abonnement` | 613, 614 | Préfixes PCG (personnalisables) |
-| `pcg_fulfilment` | 611 | Préfixes PCG |
-| `pcg_affranchissement` | 624, 625, 6241 | Préfixes PCG |
-| `pcg_packaging` | 604, 6044 | Préfixes PCG |
-| `pcg_publicite` | 622, 623, 6231 | Préfixes PCG |
+> Les tables `_cache_mois` et `_prix_histo` sont créées automatiquement à la première utilisation (`CREATE TABLE IF NOT EXISTS`).
 
 ---
 
-## ⏰ Synchronisation automatique (cron)
+## Tâches planifiées (scheduler Dolibarr)
 
-Ajouter dans **cPanel → Tâches Cron** (o2switch) :
+Le module enregistre **2 tâches** dans **Accueil → Configuration → Tâches planifiées** :
 
-```bash
-0 3 * * * /usr/local/bin/php /home/USER/public_html/DOLIBARR/htdocs/rentabiliteoctopia/cron/sync_octopia.php >> /tmp/rentabiliteoctopia_cron.log 2>&1
+1. **Rapport KPI Octopia quotidien** — envoie le rapport KPI par email.
+2. **Capture mensuelle des prix Octopia** — enregistre le snapshot des prix.
+
+> Pour créer ces tâches, **désactiver puis réactiver le module** une fois après mise à jour.
+
+Le scheduler nécessite **un seul** lanceur cron système (qui exécute toutes les tâches Dolibarr). Pour une précision à 5 minutes, le faire tourner toutes les 5 min :
+
+```
+*/5 * * * * /usr/local/bin/php /chemin/scripts/cron/cron_run_jobs.php VOTRE_CLE superadmin >> /tmp/dolibarr_cron.log 2>&1
 ```
 
-Le script cron synchronise **le mois courant + le mois précédent** (pour rattraper les commandes dont le statut a changé après clôture).
-
-Vérifier les logs :
-```bash
-tail -50 /tmp/rentabiliteoctopia_cron.log
-```
+La clé sécurisée se trouve dans **Tâches planifiées → Information**. La commande exacte (avec la clé pré-remplie) est affichée dans **Paramètres** du module.
 
 ---
 
-## 🔐 Permissions
+## Widget tableau de bord
 
-| Permission | Description |
-|---|---|
-| `rentabiliteoctopia.read` | Lecture du tableau de bord et des produits |
-| `rentabiliteoctopia.write` | Saisie des frais, sync, catégories, paramètres |
+Un widget **KPI Rentabilité Octopia** affiche le CA, la marge nette et les commandes du mois sur la page d'accueil de Dolibarr (« Mon tableau de bord »). Il s'enregistre à l'activation du module ; si besoin, l'ajouter via le sélecteur de widgets de la page d'accueil.
 
 ---
 
-## 🐛 Historique des corrections
+## Rapport mail quotidien
 
-### v1.2.1
+Configurable dans **Paramètres → Rapport quotidien des KPI par email** :
+- Activation, destinataires (séparés par des virgules), période de référence (J-1, 7 jours, mois en cours).
+- **Fréquence d'envoi** : une fois par jour à heure fixe, ou toutes les 5 / 15 / 30 minutes / toutes les heures (utile pour tester).
+- **Heure d'envoi** par pas de 5 minutes, interprétée dans **votre fuseau horaire local**.
+- Sections incluses configurables (KPI, comparaison, détail CA, top produits, cumul mois, alertes…).
+- Boutons **Tester** et **Aperçu** disponibles.
 
-| # | Fichier | Description |
-|---|---|---|
-| 1 | `admin/admin.php` | **Typo lang key** : `rentabiliteocternity` → `rentabiliteoctopia` (module non traduit) |
-| 2 | Tous les fichiers POST | **CSRF validation cassée** : `newToken()` régénérait `$_SESSION['newtoken']` AVANT la comparaison, rendant la vérification toujours fausse. Correction : comparaison directe puis `newToken()` après usage valide |
-| 3 | `modRentabiliteOctopia.class.php` | **`config_page_url`** pointait vers `admin.php` (root, obsolète) au lieu de `admin/admin.php` |
-| 4 | `admin.php` (root) | Clés de paramètres obsolètes (`commission_pct`, `abonnement_mois`…) causant des PHP Warnings. Remplacé par une redirection vers `admin/admin.php` |
-| 5 | `categories.php` | **Suppression sans CSRF** : le DELETE passait en GET sans token. Remplacé par un formulaire POST avec token |
-| 6 | `produits.php` | **`delete_produit` sans CSRF** : même vulnérabilité, corrigée |
-| 7 | `OctopiaRentabiliteSync.class.php` | **`GROUP BY p.cost_price`** pouvait créer des doublons si le `cost_price` variait. Remplacé par `MAX(COALESCE(p.cost_price, 0))` |
-| 8 | `sync.php` + `OctopiaRentabiliteSync.class.php` | **Compatibilité octopiaSync** : réécriture complète des requêtes SQL pour utiliser `llx_octopia_orders` + tables Dolibarr natives (`llx_commande`, `llx_commandedet`, `llx_product`) au lieu des tables `llx_octopiaSync_order` / `llx_octopiaSync_orderline` inexistantes |
+> La page Tâches planifiées affiche les heures en **heure serveur** : la « Prochaine exécution » peut donc apparaître décalée par rapport à l'heure locale que vous avez choisie — c'est normal.
 
 ---
 
-## 🔗 Dépendance avec octopiaSync
+## Déploiement (mise à jour des fichiers)
 
-Ce module est un **satellite de octopiaSync**. Il ne stocke pas lui-même les commandes — il les lit depuis les tables d'octopiaSync et les tables natives Dolibarr.
+Sur hébergement mutualisé (o2switch / LiteSpeed), après tout envoi de fichiers :
 
-Workflow complet :
-```
-API Octopia → [octopiaSync] → llx_octopia_orders (+ llx_commande / llx_commandedet)
-                                        ↓
-                           [rentabiliteoctopia sync]
-                                        ↓
-                  llx_rentabiliteoctopia_vente  ←  llx_rentabiliteoctopia_produit
-                  llx_rentabiliteoctopia_frais  ←  import factures fournisseur
-                                        ↓
-                              Tableau de bord rentabilité
-```
-
-Si octopiaSync n'est pas installé (`llx_octopia_orders` absente), la page de synchronisation affiche une alerte et les boutons sont désactivés. Le tableau de bord fonctionne avec des données saisies manuellement.
+1. **Upload FTP** vers `htdocs/custom/rentabiliteoctopia/`.
+2. **Purge OPcache** : `https://prod.abcduweb.fr/clear-opcache.php?key=abcduweb2025`
+3. **LiteSpeed** : « Purger tout ».
+4. **Ctrl+F5** (navigation privée recommandée).
+5. Pour les changements de **menus, tâches planifiées ou widget** : **désactiver puis réactiver le module**.
 
 ---
 
-## 👤 Auteur
+## Dépannage
 
-**ABCduWeb** — Agence web Drôme/Ardèche  
-🌐 [https://www.abcduweb.fr](https://www.abcduweb.fr)
+- **Page Diagnostic** : premier réflexe, elle vérifie tables, version, mail, expéditeur et cohérence des données avec liens de correction directe.
+- **Chiffres obsolètes** après une modification manuelle en base : **Paramètres → Vider le cache**.
+- **Mail non reçu** : vérifier dans Paramètres que l'expéditeur est bien configuré (Accueil → Configuration → Emails), éviter une adresse générique type `robot@` (rejetée par Gmail). Vérifier aussi les spams.
+- **Mauvaise heure d'envoi** : l'heure est en fuseau local ; la page Tâches planifiées, elle, affiche l'heure serveur.
 
 ---
 
-## 📄 Licence
+## Architecture technique
 
-Module propriétaire — Usage interne / commercial ABCduWeb.  
-Ne pas redistribuer sans autorisation.
+**Classes (`lib/`)**
+- `PricingEngine` — calcul de prix/marge centralisé (source unique, formule identique PHP et JS).
+- `CacheMois` — cache des agrégats mensuels figés (perf), invalidation automatique à la synchro.
+- `PrixHistorique` — capture et comparaison des prix dans le temps.
+- `AlertesEngine` — détection des alertes (perte, marge, rupture, chute CA).
+- `DailyKpiMailer` — construction et envoi du rapport KPI (multipart base64, partagé cron/aperçu).
+- `ModuleHelper` — gestion d'erreur uniforme, vérif tables/colonnes, barre de navigation.
+- `OctopiaRentabiliteSync` — synchronisation des ventes depuis octopiaSync.
+- `OctopiaFactureImport` — import des factures.
+- `rentabiliteoctopia.lib.php` — helpers (formatage €, KPI, catégories, ventes…).
+
+**Autres**
+- `class/rentabiliteoctopiacron.class.php` — méthodes appelées par le scheduler Dolibarr.
+- `core/boxes/box_rentabiliteoctopia.php` — widget tableau de bord.
+- `core/modules/modRentabiliteOctopia.class.php` — descripteur du module (menus, droits, tâches, widget).
+
+---
+
+## Notes
+
+- Les frais de port refacturés au client sont traités comme du **chiffre d'affaires** (reversé par Cdiscount), pas comme une charge. Les charges de transport réelles proviennent uniquement des factures fournisseur.
+- La commission est calculée **par produit** (selon sa catégorie), pas via une moyenne globale.
+
+---
+
+*Module développé par ABCduWeb. Usage interne et commercial.*

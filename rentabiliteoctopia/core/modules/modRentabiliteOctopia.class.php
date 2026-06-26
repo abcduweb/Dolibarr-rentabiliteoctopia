@@ -64,6 +64,17 @@ class modRentabiliteOctopia extends DolibarrModules
             ),
         );
 
+        // ====== Widget (box) page d'accueil Dolibarr ======
+        // S'insere dans llx_boxes_def a l'activation du module. L'utilisateur peut
+        // ensuite l'ajouter/retirer de "Mon tableau de bord" via le selecteur de widgets.
+        $this->boxes = array(
+            0 => array(
+                'file'             => 'box_rentabiliteoctopia.php@rentabiliteoctopia',
+                'note'             => 'KPI Rentabilite Octopia du mois en cours',
+                'enabledbydefault' => 1,
+            ),
+        );
+
         $this->menu[$r++] = array(
             'fk_menu'  => 'fk_mainmenu=rentabiliteoctopia', 'type' => 'left',
             'titre'    => 'Diagnostic',
