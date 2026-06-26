@@ -264,7 +264,16 @@ if ($action === 'save') {
             default:       $cronFreq = 1;  $cronUnit = 86400; break;
         }
         if ($freqChoisie === 'daily') {
-            $nextTs = dol_mktime($hChoisi, $mnChoisi, 0, (int)dol_print_date(dol_now(), '%m'), (int)dol_print_date(dol_now(), '%d'), (int)dol_print_date(dol_now(), '%Y'));
+            // L'heure choisie est interpretee dans le FUSEAU DE L'UTILISATEUR ('tzuser'),
+            // pas celui du serveur : ainsi "10:30" = 10:30 heure locale de l'utilisateur.
+            // (La page Taches planifiees affichera l'heure serveur correspondante, c'est normal.)
+            $nextTs = dol_mktime(
+                $hChoisi, $mnChoisi, 0,
+                (int)dol_print_date(dol_now(), '%m', 'tzuser'),
+                (int)dol_print_date(dol_now(), '%d', 'tzuser'),
+                (int)dol_print_date(dol_now(), '%Y', 'tzuser'),
+                'tzuser'
+            );
             if ($nextTs <= dol_now()) $nextTs = dol_time_plus_duree($nextTs, 1, 'd');
         } else {
             $nextTs = dol_now();
