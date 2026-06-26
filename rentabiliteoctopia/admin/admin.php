@@ -199,7 +199,7 @@ if ($action === 'save') {
             'daily_kpi_show_kpis', 'daily_kpi_show_compare_j2', 'daily_kpi_show_compare_week',
             'daily_kpi_show_detail_ca', 'daily_kpi_show_top_produits', 'daily_kpi_top_n',
             'daily_kpi_show_cumul_mois', 'daily_kpi_show_seuil_alert', 'daily_kpi_period',
-            'daily_kpi_send_hour', 'daily_kpi_show_alertes',
+            'daily_kpi_send_hour', 'daily_kpi_send_minute', 'daily_kpi_frequency', 'daily_kpi_show_alertes',
         );
         $ok = true;
         // BUGFIX: GETPOST avec 'alpha' rejette chiffres+virgules.
@@ -249,6 +249,30 @@ if ($action === 'save') {
                 $db->query($sql);
             }
         }
+
+        // --- Piloter la tache planifiee Dolibarr selon la frequence choisie ---
+        // Le job "Rapport KPI Octopia quotidien" est ainsi synchronise automatiquement,
+        // sans avoir a editer la frequence a la main dans les Taches planifiees.
+        $freqChoisie = isset($_POST['daily_kpi_frequency']) ? trim((string)$_POST['daily_kpi_frequency']) : 'daily';
+        $hChoisi  = isset($_POST['daily_kpi_send_hour'])   ? (int)$_POST['daily_kpi_send_hour']   : 8;
+        $mnChoisi = isset($_POST['daily_kpi_send_minute']) ? (int)$_POST['daily_kpi_send_minute'] : 0;
+        switch ($freqChoisie) {
+            case '5min':   $cronFreq = 5;  $cronUnit = 60;    break;
+            case '15min':  $cronFreq = 15; $cronUnit = 60;    break;
+            case '30min':  $cronFreq = 30; $cronUnit = 60;    break;
+            case 'hourly': $cronFreq = 1;  $cronUnit = 3600;  break;
+            default:       $cronFreq = 1;  $cronUnit = 86400; break;
+        }
+        if ($freqChoisie === 'daily') {
+            $nextTs = dol_mktime($hChoisi, $mnChoisi, 0, (int)dol_print_date(dol_now(), '%m'), (int)dol_print_date(dol_now(), '%d'), (int)dol_print_date(dol_now(), '%Y'));
+            if ($nextTs <= dol_now()) $nextTs = dol_time_plus_duree($nextTs, 1, 'd');
+        } else {
+            $nextTs = dol_now();
+        }
+        $sqlCron = "UPDATE ".MAIN_DB_PREFIX."cronjob
+                    SET frequency = ".(int)$cronFreq.", unitfrequency = ".(int)$cronUnit.", datenextrun = '".$db->idate($nextTs)."'
+                    WHERE entity = ".((int)$conf->entity)." AND objectname = 'RentabiliteOctopiaCron' AND methodename = 'sendDailyKpiMail'";
+        $db->query($sqlCron);
 
         $ok ? setEventMessages('Paramètres enregistrés', null, 'mesgs') : setEventMessages('Erreur : '.$db->lasterror(), null, 'errors');
     }
@@ -372,17 +396,43 @@ print '</select></td>';
 print '<td style="font-size:12px;color:#888">Periode prise comme reference pour les KPI</td>';
 print '</tr>';
 
-// Heure d'envoi (utilise uniquement pour generer la ligne cron a coller)
-$hourSend = isset($params['daily_kpi_send_hour']) && $params['daily_kpi_send_hour'] !== '' ? (int)$params['daily_kpi_send_hour'] : 8;
+// Frequence + heure d'envoi (pilotent la tache Dolibarr ET la ligne cron generee)
+$hourSend   = isset($params['daily_kpi_send_hour'])   && $params['daily_kpi_send_hour']   !== '' ? (int)$params['daily_kpi_send_hour']   : 8;
+$minuteSend = isset($params['daily_kpi_send_minute']) && $params['daily_kpi_send_minute'] !== '' ? (int)$params['daily_kpi_send_minute'] : 0;
+$frequence  = isset($params['daily_kpi_frequency'])   && $params['daily_kpi_frequency']   !== '' ? $params['daily_kpi_frequency']        : 'daily';
+
+$freqOptions = array(
+    'daily'  => 'Une fois par jour (a heure fixe)',
+    '5min'   => 'Toutes les 5 minutes',
+    '15min'  => 'Toutes les 15 minutes',
+    '30min'  => 'Toutes les 30 minutes',
+    'hourly' => 'Toutes les heures',
+);
 print '<tr class="oddeven">';
-print '<td><b>Heure d\'envoi souhaitee</b></td>';
-print '<td><select name="daily_kpi_send_hour" class="flat">';
-for ($h = 0; $h < 24; $h++) {
-    $sel = ($hourSend === $h) ? ' selected' : '';
-    print '<option value="'.$h.'"'.$sel.'>'.str_pad($h, 2, '0', STR_PAD_LEFT).':00</option>';
+print '<td><b>Frequence d\'envoi</b></td>';
+print '<td><select name="daily_kpi_frequency" class="flat">';
+foreach ($freqOptions as $fval => $flbl) {
+    print '<option value="'.$fval.'"'.($frequence === $fval ? ' selected' : '').'>'.$flbl.'</option>';
 }
 print '</select></td>';
-print '<td style="font-size:12px;color:#888">Sert a generer la ligne cron ci-dessous (l\'envoi reel depend du cron cPanel)</td>';
+print '<td style="font-size:12px;color:#888">"Toutes les X minutes" est pratique pour tester l\'envoi sans attendre une journee. Repassez sur "une fois par jour" ensuite.</td>';
+print '</tr>';
+
+print '<tr class="oddeven">';
+print '<td><b>Heure d\'envoi souhaitee</b><br><span style="font-size:11px;color:#aaa;">si frequence = une fois par jour</span></td>';
+print '<td>';
+print '<select name="daily_kpi_send_hour" class="flat">';
+for ($h = 0; $h < 24; $h++) {
+    print '<option value="'.$h.'"'.($hourSend === $h ? ' selected' : '').'>'.str_pad($h, 2, '0', STR_PAD_LEFT).'</option>';
+}
+print '</select> : ';
+print '<select name="daily_kpi_send_minute" class="flat">';
+for ($mn = 0; $mn < 60; $mn += 5) {
+    print '<option value="'.$mn.'"'.($minuteSend === $mn ? ' selected' : '').'>'.str_pad($mn, 2, '0', STR_PAD_LEFT).'</option>';
+}
+print '</select>';
+print '</td>';
+print '<td style="font-size:12px;color:#888">Reglage par pas de 5 minutes (ex. 10:05, 10:35). Sert a generer la ligne cron ci-dessous.</td>';
 print '</tr>';
 
 // Sections du mail (header)
@@ -539,10 +589,10 @@ print '<li>Vous y verrez <b>"Rapport KPI Octopia quotidien"</b> et <b>"Capture m
 print '<li>Verifiez qu\'elles sont <b>activees</b> (statut "Active"). Reglez l\'heure de declenchement souhaitee dans la colonne "Prochaine execution".</li>';
 print '<li><b>Important :</b> pour que le scheduler tourne, une tache cron systeme minimale doit appeler le lanceur Dolibarr. Si ce n\'est pas deja fait, ajoutez UNE seule ligne cron o2switch :</li>';
 print '</ol>';
-$cronLauncher = '*/15 * * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/../scripts/cron/cron_run_jobs.php '.(!empty($conf->file->cron_securekey) ? $conf->file->cron_securekey : 'VOTRE_CLE').' superadmin >> /tmp/dolibarr_cron.log 2>&1';
+$cronLauncher = '*/5 * * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/../scripts/cron/cron_run_jobs.php '.(!empty($conf->file->cron_securekey) ? $conf->file->cron_securekey : 'VOTRE_CLE').' superadmin >> /tmp/dolibarr_cron.log 2>&1';
 print '<code style="display:block;background:#fff;padding:10px;border-radius:4px;font-size:11px;word-break:break-all;border:1px solid #ddd;">'.dol_escape_htmltag($cronLauncher).'</code>';
 print '<p style="font-size:12px;color:#666;margin-top:8px;">';
-print 'Ce lanceur unique (toutes les 15 min) execute TOUTES vos taches planifiees Dolibarr, pas seulement celles de ce module. ';
+print 'Ce lanceur unique (toutes les 5 min) execute TOUTES vos taches planifiees Dolibarr, pas seulement celles de ce module. ';
 print 'La cle securisee se trouve dans <b>Accueil &rarr; Configuration &rarr; Taches planifiees</b> (lien "Information" en haut).';
 print '</p>';
 print '<p style="font-size:12px;color:#888;margin-top:6px;font-style:italic;">';
@@ -568,8 +618,17 @@ print '<li>Cliquez sur <b>"Ajouter une nouvelle tache Cron"</b></li>';
 print '</ol>';
 
 print '<p style="font-size:13px;margin-top:14px;"><b>Ou ligne complete</b> (pour copier-coller dans une console SSH ou un fichier crontab) :</p>';
-$hourCron = isset($params['daily_kpi_send_hour']) && $params['daily_kpi_send_hour'] !== '' ? (int)$params['daily_kpi_send_hour'] : 8;
-$cronCmd  = '0 '.$hourCron.' * * * /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1';
+$hourCron   = isset($params['daily_kpi_send_hour'])   && $params['daily_kpi_send_hour']   !== '' ? (int)$params['daily_kpi_send_hour']   : 8;
+$minuteCron = isset($params['daily_kpi_send_minute']) && $params['daily_kpi_send_minute'] !== '' ? (int)$params['daily_kpi_send_minute'] : 0;
+$freqCron   = isset($params['daily_kpi_frequency'])   && $params['daily_kpi_frequency']   !== '' ? $params['daily_kpi_frequency']        : 'daily';
+switch ($freqCron) {
+    case '5min':   $cronSchedule = '*/5 * * * *';  break;
+    case '15min':  $cronSchedule = '*/15 * * * *'; break;
+    case '30min':  $cronSchedule = '*/30 * * * *'; break;
+    case 'hourly': $cronSchedule = '0 * * * *';    break;
+    default:       $cronSchedule = $minuteCron.' '.$hourCron.' * * *'; break;
+}
+$cronCmd  = $cronSchedule.' /usr/local/bin/php '.DOL_DOCUMENT_ROOT.'/custom/rentabiliteoctopia/cron/daily_kpi_mail.php >> /tmp/rentabiliteoctopia_daily.log 2>&1';
 print '<code style="display:block;background:#fff;padding:10px;border-radius:4px;font-size:12px;word-break:break-all;border:1px solid #ddd;">'.dol_escape_htmltag($cronCmd).'</code>';
 print '<p style="font-size:12px;color:#666;margin-top:10px;">';
 print '<b>Pour tester manuellement :</b><br>';
